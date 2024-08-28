@@ -1,0 +1,159 @@
+import os 
+import shutil 
+import numpy as np
+from ..managers.DFTSimulationManager import DFTSimulationManager
+from ..managers.LammpsSimulationManager import LammpsSimulationManager   
+from ..common.DFTDataParser import DFTDataParser
+ 
+
+class PotentialValidation:
+    def __init__(self, potential_file, lammps_model_file, dft_model_file, element_list, use_dft=False):
+        #initialize variables
+        self.potential_file = potential_file
+        self.lammps_model_file = lammps_model_file
+        self.dft_model_file = dft_model_file
+        self.element_list = element_list
+        self.use_dft = use_dft
+        
+        #initialize folder structures
+        self.original_directory = os.getcwd()
+        self.root_directory = os.getcwd() + "/validation/"
+        os.makedirs(self.root_directory, exist_ok=True)
+        os.chdir(self.root_directory)
+        
+        #initialize simulation managers
+        self.lammps_manager = LammpsSimulationManager()
+        self.dft_manager = DFTSimulationManager()
+        self.dft_result = {}
+        self.initialize_simulation_files()
+
+    def start_validation(self, overwrite=True, local=False):
+        """
+        Start the validation process by running the LAMMPS and DFT simulations.
+        """
+        lammps_results = self.lammps_manager.start_simulation(overwrite=overwrite, local=local)
+        if self.use_dft:
+            dft_results = self.dft_manager.start_simulation(overwrite=overwrite, local=local)
+            
+
+        if lammps_results and self.use_dft and dft_results:
+            percent_error = []
+
+            for lammps, dft in zip(lammps_results, dft_results):
+                # Calculating percent error for each parameter
+                error_dict = {}
+                for key in lammps:
+                    error_dict[key] = abs(lammps[key] - dft[key]) / dft[key] * 100
+                percent_error.append(error_dict)
+
+            return percent_error
+        elif lammps_results and not self.use_dft: 
+            return lammps_results
+        else :
+            #throw an error
+            raise ValueError("LAMMPS or DFT results are missing.")
+    def retrieve_dft_result(self, simulation_type, data_type, path):
+        if simulation_type == "lattice_constants":
+            parser = DFTDataParser(path)
+            self.dft_result[data_type] = parser.get_lattice_constants()
+        elif simulation_type == "surface_energy":
+            parser = DFTDataParser(path)
+            self.dft_result[data_type] = parser.get_energy()
+        else:
+            raise ValueError(f"Simulation type '{simulation_type}' is not supported.")
+        
+
+
+    
+        
+
+
+class ValidationData:
+    def __init__(self, potential_version, potential_file):
+        self.potential_version = potential_version
+        self.potential_file = potential_file
+        self.validation_data = {}
+    def add_validation(self, validation_type, validation_results):
+        self.validation_data[validation_type] = validation_results
+    def get_potential_version(self):
+        return self.potential_version
+    def get_validation_data(self):
+        return self.validation_data
+    def get_potential_file(self):
+        return self.potential_file
+    def __str__(self):
+        output = f"Potential version: {self.potential_version}\n"
+        for validation_type, validation_results in self.validation_data.items():
+            output += f"{validation_type} validation results:\n"
+            # Check if validation_results is a list of dictionaries
+            if isinstance(validation_results, list):
+                for result in validation_results:
+                    if isinstance(result, dict):
+                        for key, value in result.items():
+                            if isinstance(value, (int, float)):  # Check if the value is numeric
+                                output += f"  {key}: {value:.6f}%\n"
+                            else:
+                                output += f"  {key}: {value}\n"  # Handle non-numeric values differently
+                    else:
+                        output += f"  {result}\n"  # Handle non-dictionary list items
+            else:
+                # Handle case where validation_results is a single dictionary
+                for key, value in validation_results.items():
+                    if isinstance(value, (int, float)):  # Check if the value is numeric
+                        output += f"  {key}: {value:.6f}%\n"
+                    else:
+                        output += f"  {key}: {value}\n"  # Handle non-numeric values differently
+        return output
+    def save_to_file(self, directory):
+        with open(os.path.join(directory, f"{self.potential_file}_{self.potential_version}_validation.txt"), "w") as file:
+            file.write(str(self))
+        
+class ValidationDataCompare:
+    def __init__(self, validation_1, validation_2):
+        self.validation_1 = validation_1
+        self.validation_2 = validation_2
+    
+    def calculate_difference(self):
+        difference = {}
+        validation_data_1 = self.validation_1.get_validation_data()
+        validation_data_2 = self.validation_2.get_validation_data()
+
+        for validation_type in validation_data_1:
+            difference[validation_type] = []
+            # Check if both validation results are lists (for handling multiple entries)
+            if isinstance(validation_data_1[validation_type], list) and isinstance(validation_data_2[validation_type], list):
+                for val1, val2 in zip(validation_data_1[validation_type], validation_data_2[validation_type]):
+                    diff_dict = {}
+                    for key in val1:
+                        value1 = val1[key]
+                        value2 = val2[key]
+                        try:
+                            # Attempt to convert both values to float
+                            value1 = float(value1)
+                            value2 = float(value2)
+                            # Calculate the absolute difference
+                            diff_dict[key] = abs(value1 - value2)
+                        except (ValueError, TypeError):
+                            # If conversion fails, set the difference to None
+                            diff_dict[key] = None
+                            print(f"Warning: Could not convert '{key}' values to float in '{validation_type}'. Difference set to None.")
+                    difference[validation_type].append(diff_dict)
+            else:
+                # Handle the case where validation results are single dictionaries
+                diff_dict = {}
+                for key in validation_data_1[validation_type]:
+                    value1 = validation_data_1[validation_type][key]
+                    value2 = validation_data_2[validation_type][key]
+                    try:
+                        # Attempt to convert both values to float
+                        value1 = float(value1)
+                        value2 = float(value2)
+                        # Calculate the absolute difference
+                        diff_dict[key] = abs(value1 - value2)
+                    except (ValueError, TypeError):
+                        # If conversion fails, set the difference to None
+                        diff_dict[key] = None
+                        print(f"Warning: Could not convert '{key}' values to float in '{validation_type}'. Difference set to None.")
+                difference[validation_type] = diff_dict
+        
+        return difference

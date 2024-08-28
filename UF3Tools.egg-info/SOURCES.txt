@@ -1,0 +1,7 @@
+setup.py
+UF3Tools/__init__.py
+UF3Tools/uf3_handler.py
+UF3Tools.egg-info/PKG-INFO
+UF3Tools.egg-info/SOURCES.txt
+UF3Tools.egg-info/dependency_links.txt
+UF3Tools.egg-info/top_level.txt
