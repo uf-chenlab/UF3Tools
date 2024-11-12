@@ -1,0 +1,570 @@
+from UF3Tools.uf3_handler import *
+from UF3Tools.simulations import *
+import shutil
+
+class ModelAutomater:
+    def __init__(self, directories, run_data_path, feature_filename, element_list, degree, chemical_system, maps, num_cores):
+         # Class-wide LUT for filter types to corresponding methods
+        self.FILTER_FUNCTION_LUT = {
+            'composition': 'filter_composition',
+            'energy_above_hull': 'filter_energy_above_hull',
+            'maximum_force': 'filter_force',
+            'zero_force': 'remove_zero_force',
+            'minimum_force': 'filter_force_minimum',
+            'none': 'get_data'
+            # Add new filters here as needed
+        }
+        
+        self.directories = directories
+        self.run_data_path = run_data_path
+        self.feature_filename = feature_filename
+        self.element_list = element_list
+        self.degree = degree
+        self.chemical_system = chemical_system
+        self.maps = maps
+        self.num_cores = num_cores
+        self.pickle_directory = 'data/pickle_files/'
+        self.filter_directory = 'data/pickle_files/filtered/'
+        self.feature_directory = 'data/featurized/'
+        
+        #init variables
+        self.feature_batch_size = 500
+        self.data_coordinator = io.DataCoordinator()
+        self.base_data_labels = []
+        self.base_data_frames = {}
+        self.filtered_data_frames = {}
+        self.filtered_data_labels = []
+        self.feature_paths = {}
+        self.model_data = pd.DataFrame()
+        self.data_ignore_list = []
+        self.validation_datas = []
+        self.index_patterns = {}
+        
+        # Load existing data
+        self.load_existing_base_data()
+        self.load_existing_features()
+        
+
+    def load_existing_data(self, directory):
+        """
+        Load existing data from the specified directory, ignoring files that match data types in data_ignore_list.
+        """
+        data_parser = DataParser(directory, self.data_coordinator)
+        data_files = {}
+        local_data_labels = []
+        for file in os.listdir(directory):
+            if file.endswith('.pkl'):
+                # Extract the data type from the file name and check against the ignore list
+                data_type = file.replace('.pkl', '')
+                data_type = data_type.replace('_filtered', '')
+                if data_type in self.data_ignore_list:
+                    continue
+                data_parser.load_from_pickle(directory + file)
+                data_files[file] = data_parser.get_data()
+                local_data_labels.append(file)
+        return data_files, local_data_labels
+    def replace_existing_data(self, filename, data):
+        filepath = os.path.join(self.pickle_directory, filename)
+        parser = DataParser('', self.data_coordinator)
+        parser.set_data(data)
+        parser.export_to_pickle(filepath)
+        
+    def load_single_pickle_file(self, file_path):
+        data_parser = DataParser('', self.data_coordinator)
+        data_parser.load_from_pickle(file_path)
+        return data_parser.get_data()
+                
+    def load_new_base_data(self, filter=True):
+        print(self.directories)
+        for directory in self.directories:
+            print("looking in directory: ", directory)
+            data_parser = DataParser([directory], self.data_coordinator)
+            data_parser.parse_directories(output=True, filter=filter)
+            # Export to pickle with the same name as the directory
+            filename = directory.split('/')[-1]
+            print(f"folder filename: {filename} : {directory}")
+            data_parser.export_to_pickle(self.pickle_directory + filename + '.pkl')
+        self.load_existing_data()
+
+    def load_existing_base_data(self):
+        """
+        Load base data while ignoring data types in data_ignore_list.
+        """
+        self.base_data_labels = []
+        self.base_data_frames = {}
+        data_files, local_data_labels = self.load_existing_data(self.pickle_directory)
+        self.base_data_labels += local_data_labels
+        self.base_data_frames.update(data_files)
+        for file in data_files:
+            # Check and load corresponding feature files
+            data_type = file.replace('.pkl', '')
+            if data_type in self.data_ignore_list:
+                continue
+            feature_file = f'df_features_{data_type}.h5'
+            feature_path = os.path.join(self.feature_directory, feature_file)
+            if os.path.exists(feature_path):
+                self.feature_paths[file] = feature_path
+            else:
+                print(f"Warning: No feature file found for {file}")
+
+    def get_data(self):
+        return self.data_frames
+    
+    def get_data(self, data_type):
+        print(self.filtered_data_frames)
+        return self.filtered_data_frames[data_type]
+    
+    def get_feature_paths(self):
+        return self.feature_paths
+
+    def load_existing_features(self):
+        """
+        Load feature files, ignoring those corresponding to data types in data_ignore_list.
+        """
+        for file in os.listdir(self.feature_directory):
+            if file.endswith('.h5'):
+                data_type = file.replace('df_features_', '').replace('.h5', '')
+                if data_type in self.data_ignore_list:
+                    continue
+                pickle_file_name = f'{data_type}.pkl'
+                if pickle_file_name in self.base_data_frames:
+                    self.feature_paths[pickle_file_name] = os.path.join(self.feature_directory, file)
+                else:
+                    print(f"Warning: Feature file {file} does not have a corresponding pickle file.")
+
+    def generate_new_features(self):
+        """
+        Generate feature files for all data frames, excluding data types in data_ignore_list.
+        """
+        os.chdir(self.feature_directory)
+        for label, data in self.base_data_frames.items():
+            data_type = label.replace('.pkl', '')
+            if data_type in self.data_ignore_list:
+                continue
+            output_file = f'df_features_{data_type}.h5'
+            featurizer = Featurizer(data, self.chemical_system, self.maps)
+            featurizer.featurize_data(self.num_cores, output_file, self.feature_batch_size)
+        self.load_existing_features()
+    def clear_filtered_data(self):
+        UF3FileHandler(self.filter_directory).clear_directory()
+        self.filtered_data_labels = []
+        self.filtered_data_frames = {}
+    def load_filtered_data(self):
+        """
+            Load filtered data from the filter directory. This data will actually be used for training/testing
+        """
+        self.filtered_data_labels = []
+        self.filtered_data_frames = {}
+        data_files, local_data_labels = self.load_existing_data(self.filter_directory)
+        self.filtered_data_labels += local_data_labels
+        self.filtered_data_frames.update(data_files)
+    def check_structure_data(self, data):
+        """
+        Check for the presence of necessary data columns: eah and element fractions.
+        
+        Parameters:
+        - data: DataFrame containing the structure data to check.
+        
+        Returns:
+        - bool: True if all necessary data is present, False otherwise.
+        """
+        
+        # Check for the existence of the 'eah' column
+        if 'eah' not in data.columns:
+            print('No eah data found')
+            return False
+        
+        # Check for element fraction columns based on self.element_list
+        missing_elements = []
+        for element in self.element_list:
+            if f'{element}_frac' not in data.columns:
+                missing_elements.append(element)
+        
+        if missing_elements:
+            print(f"Missing fraction data for elements: {', '.join(missing_elements)}")
+            return False
+        
+        return True
+    def repair_structure_data(self, data):
+        print("Repairing structure data...")
+        sp = StructureParser(data)
+        return sp.get_data()
+    def generate_new_filtered_data(self, data_type, filter_type, check_existing=True, *args ):
+        """
+        Generate new filtered data based on the data type and filter type provided.
+        
+        Parameters:
+        - data_type: 'structures', 'temperature', 'pressure', etc.
+        - filter_type: 'composition', 'energy_above_hull', 'maximum_force', etc.
+        - args: Additional arguments for the specific filter.
+        - check_existing: Boolean flag to check for existing filtered files before filtering.
+        """
+        filtered_filename = f'{data_type}_filtered.pkl'
+        filtered_file_path = os.path.join(self.filter_directory,  filtered_filename)
+        # Load the appropriate data
+        if check_existing:
+            #check if the filtered file is already in the filtered_data_frames
+            if  filtered_filename in self.filtered_data_frames:
+                data = self.filtered_data_frames[filtered_filename]
+        else:
+            data_filename = f'{data_type}.pkl'
+            if data_filename not in self.base_data_frames:
+                print(f"No data loaded for {data_type}.")
+                return
+            data = self.base_data_frames[data_filename]
+            # Check for the appropriate data columns
+            if data_type == 'structure':
+                if not self.check_structure_data(data):
+                    data = self.repair_structure_data(data)
+                    self.replace_existing_data(data_filename, data)
+                    
+
+            
+        
+        
+                
+        # Create a DataFilter instance
+        data_filter = DataFilter(data)
+        print(f"Filtering {data_type} data with {filter_type} filter.")
+        print(f"Current data length: {len(data)}")
+        
+        # Find the appropriate filter method
+        filter_method_name = self.FILTER_FUNCTION_LUT.get(filter_type)
+        if not filter_method_name:
+            print(f"Unsupported filter type: {filter_type}")
+            return
+        
+        # Get the filter method from the DataFilter instance
+        filter_method = getattr(data_filter, filter_method_name, None)
+        if not filter_method:
+            print(f"Filter method {filter_method_name} not found in DataFilter.")
+            return
+        
+        # Apply the filter with the provided arguments
+        filter_method(*args)
+        
+        # Export the filtered data to a new pickle file in the filtered directory
+        data_filter.export_to_pickle(filtered_file_path)
+        
+        print(f"Filtered data length: {len(data_filter.get_data())}")
+        
+        # Reload the filtered data
+        self.load_filtered_data()
+    def copy_unfiltered_data(self):
+        """
+        Copy unfiltered data to the filtered directory, excluding data types in data_ignore_list.
+        """
+        for label, data in self.base_data_frames.items():
+            data_type = label.replace('.pkl', '')
+            if data_type in self.data_ignore_list:
+                continue
+            filtered_label = label.replace('.pkl', '_filtered.pkl')
+            if filtered_label not in self.filtered_data_labels:
+                data_parser = DataParser('', self.data_coordinator)
+                data_parser.set_data(data)
+                data_parser.export_to_pickle(os.path.join(self.filter_directory, filtered_label))
+    def clear_memory(self):
+        """
+        Clear all data from memory.
+        """
+        self.base_data_labels = []
+        self.base_data_frames = {}
+        self.filtered_data_frames = {}
+        self.filtered_data_labels = []
+    def clear_ignore_list(self):
+        self.data_ignore_list = []
+    def add_to_ignore_list(self, data_label):
+        self.data_ignore_list.append(data_label)
+    def consolidate_data(self):
+        """
+        Consolidate all data into a single DataFrame for training/testing, ignoring data types in data_ignore_list.
+        """
+        self.load_filtered_data()
+        consolidated_data = pd.DataFrame()
+        for label, data in self.filtered_data_frames.items():
+            # Remove '.pkl', '_filtered', and '_rebalanced' suffixes
+            data_type = label.replace('.pkl', '').replace('_filtered', '').replace('_rebalanced', '')
+            if data_type in self.data_ignore_list:
+                continue
+            print(f"adding {data_type} data with length {len(data)}")
+            consolidated_data = pd.concat([consolidated_data, data], ignore_index=False)
+        print(f"Consolidated data length: {len(consolidated_data)}")
+        #self.clear_memory()
+        self.model_data = consolidated_data
+    def get_unique_indices(self, data):
+        """
+        Get the unique indices in the DataFrame.
+
+        :return: List of unique indices.
+        """
+        return data.index.to_series().apply(lambda x: x.lower().split('_run')[0]).unique()
+    def split_data(self, test_percent=0.2, filter_index=True):
+        """
+        Split the data into training and testing sets.
+
+        Parameters:
+        - test_percent: Fraction of data to use for testing.
+        - filter_index: Boolean flag to determine whether or not to require indices
+        to be fully in either train or test.
+        """
+        print(self.model_data)
+
+        # Get unique index prefixes
+        index_prefixes = self.get_unique_indices(self.model_data)
+        print(f"Unique prefixes: {index_prefixes}")
+
+        np.random.seed(42)  # for reproducibility
+        num_indices_to_select = int(test_percent * len(index_prefixes))
+        selected_prefixes = np.random.choice(index_prefixes, num_indices_to_select, replace=False)
+        print(f"Selected prefixes: {selected_prefixes}")
+
+        if filter_index:
+            # Filter data for testing set based on the selected prefixes
+            self.testing_set = self.model_data[self.model_data.index.to_series().apply(
+                lambda x: x.lower().split('_run')[0]).isin(selected_prefixes)]
+            self.test_keys = self.testing_set.index
+
+            # Filter data for training set
+            self.training_set = self.model_data[~self.model_data.index.isin(self.testing_set.index)]
+        else:
+            # Randomly shuffle and split the data without filtering based on the index prefixes
+            shuffled_data = self.model_data.sample(frac=1, random_state=42)
+            split_point = int(len(shuffled_data) * (1 - test_percent))
+            self.training_set = shuffled_data.iloc[:split_point]
+            self.testing_set = shuffled_data.iloc[split_point:]
+
+        # Store the indices for training and testing sets
+        self.train_keys = self.training_set.index
+        self.test_keys = self.testing_set.index
+
+        print(f"Training set length: {len(self.training_set)}. Testing set length: {len(self.testing_set)}")
+        return self.training_set, self.testing_set
+
+       
+    def train_model(self, model_filename, training_data, testing_data, regularizer, weight=0.3, batch_size=2500):
+        """
+        Train a model using the given data.
+        
+        Parameters:
+        - regularizer: Regularization parameter for the model.
+        - weight: Class weight for the model.
+        - batch_size: Batch size for training.
+        """
+        #get the actual data from self.feature_paths
+        features = []
+        for key in self.feature_paths:
+            print(f"key: {key}")
+            #remove .pkl from the key
+            data_type = key.replace('.pkl', '')
+            if(data_type in self.data_ignore_list):
+                continue
+            features.append(self.feature_paths[key])
+            print(f"feature path: {self.feature_paths[key]}")
+        #find the structures feature file
+        for feature in features:
+            if 'structure' in feature:
+                structure_feature = feature
+                break
+        trainer = ModelTrainer(self.model_data, self.chemical_system, self.maps, regularizer)
+        trainer.set_training_set(training_data)
+        print(f"trainer training length: {len(trainer.get_training_set())}")
+        trainer.set_testing_set(testing_data)
+        print(f"trainer testing length: {len(trainer.get_testing_set())}")
+        print(f"feature file list length: {len(features)}")
+        if(len(features) == 0):
+            print("No features found")
+            return
+        if(len(features) == 1):
+            print(f'Training model with single feature file {features[0]}')
+            trainer.train_model(features[0], weight, batch_size)
+        else:
+            trainer.train_model_multiple_files(features, weight, batch_size)
+        trainer.export_model(model_filename + ".json")
+        print(structure_feature)
+        #analyzer = ModelAnalyzer(self.chemical_system, trainer.get_model(), trainer.get_bspline_config(), training_data, structure, structure_feature)
+        return self.chemical_system, trainer.get_model(), trainer.get_bspline_config(), features, model_filename
+    def store_validation_data(self, model_filename, validation_data):
+        """
+        Store the validation data for a given model.
+        """
+        #store the validation data in potentials folder
+        with open(f'potentials/{model_filename}_validation_data.txt', 'w') as f:
+            f.write(str(validation_data))
+        self.validation_datas.append(validation_data)
+        print(f'Validation Data Length: {len(self.validation_datas)}')
+        
+        #write the entire validation datas to a file
+        with open('validation_datas.txt', 'w') as f:
+            print(f"writing validation data to file")
+            print(self.validation_datas)
+            for data in self.validation_datas:
+                f.write(str(data) + '\n')
+                f.flush()
+                print(f"writing data: {str(data)}")
+                print(f"writing data: {str(data.__str__())}")
+        
+    def get_all_dataframes(self):
+        """
+        Retrieve all the DataFrames used in training the model, including both base and filtered data frames.
+        
+        Returns:
+            dict: A dictionary containing base data frames and filtered data frames.
+        """
+        # Ensure data is loaded
+        if not self.base_data_frames:
+            self.load_existing_base_data()
+        if not self.filtered_data_frames:
+            self.load_filtered_data()
+        
+        # Combine both base and filtered data into a single dictionary
+        all_data_frames = {
+            "base_data_frames": self.base_data_frames,
+            "filtered_data_frames": self.filtered_data_frames
+        }
+        
+        return all_data_frames
+ 
+    def set_dataframe(self, dataframe):
+        """
+        Accept a dataframe directly and assign it to the model_data attribute.
+        """
+        if not isinstance(dataframe, pd.DataFrame):
+            raise ValueError("Input must be a pandas DataFrame.")
+        
+        # Assign the provided dataframe to the model_data attribute
+        self.model_data = dataframe
+        print(f"Dataframe with {len(dataframe)} rows and {len(dataframe.columns)} columns set successfully.")
+        
+    def extract_index_pattern(self, df, pattern_key):
+        """
+        Extract and store the index pattern for a given DataFrame.
+        
+        Parameters:
+        - df: The DataFrame from which to extract the index pattern.
+        - pattern_key: A unique key to associate with the extracted pattern (e.g., the dataset name).
+        """
+        if not df.index.empty:
+            # Extract a naming pattern based on the first index value
+            sample_index = str(df.index[0])
+            
+            # Here, we assume the pattern is the prefix before '_run' or any specific delimiter
+            if '_run' in sample_index:
+                pattern = sample_index.split('_run')[0] + '_run'
+            else:
+                pattern = sample_index
+            
+            # Store the extracted pattern
+            self.index_patterns[pattern_key] = pattern
+            print(f"Extracted index pattern for {pattern_key}: {pattern}")
+        else:
+            print(f"DataFrame {pattern_key} has an empty index. No pattern extracted.")
+
+    def apply_index_pattern(self, df, pattern_key):
+        """
+        Apply the stored index pattern when reassigning indices to a DataFrame.
+        
+        Parameters:
+        - df: The DataFrame to which the index pattern will be applied.
+        - pattern_key: The key for the pattern stored in self.index_patterns.
+        
+        Returns:
+        - DataFrame with reassigned indices based on the stored pattern.
+        """
+        if pattern_key in self.index_patterns:
+            pattern = self.index_patterns[pattern_key]
+            new_indices = [f"{pattern}_{i}" for i in range(len(df))]
+            df.index = new_indices
+            print(f"Applied index pattern {pattern_key} to DataFrame.")
+        else:
+            print(f"No pattern found for {pattern_key}. Index not changed.")
+        
+        return df
+    def export_rebalanced_data(self, rebalanced_data_dict):
+        """
+        Save each rebalanced DataFrame in rebalanced_data_dict to a new .pkl file with '_rebalanced' suffix.
+        
+        Parameters:
+        - rebalanced_data_dict: Dictionary of rebalanced dataframes (dataset name -> dataframe).
+        """
+        for original_filename, df in rebalanced_data_dict.items():
+            # Generate the new filename with '_rebalanced' suffix
+            rebalanced_filename = original_filename.replace('_filtered', '_rebalanced')
+            
+            # Use replace_existing_data to save the rebalanced DataFrame
+            self.replace_existing_data(rebalanced_filename, df)
+            
+            print(f"Saved rebalanced data for {original_filename} as {rebalanced_filename}")    
+    def run_grid_search(self, composition_element, composition_range, energy_range, force_range, min_force_range, regularizer_ranges):
+        """
+        Run a grid search to find the best hyperparameters for the model, including the regularizer values.
+        """
+
+        for composition in composition_range:
+            for energy in energy_range:
+                for force in force_range:
+                    for min_force in min_force_range: 
+                        for ridge_1b in regularizer_ranges['ridge_1b']:
+                            for ridge_2b in regularizer_ranges['ridge_2b']:
+                                for ridge_3b in regularizer_ranges['ridge_3b']:
+                                    for curvature_2b in regularizer_ranges['curvature_2b']:
+                                        for curvature_3b in regularizer_ranges['curvature_3b']:
+                                            print(f"Running grid search for composition={composition}, energy={energy}, force={force}, "
+                                                f"ridge_1b={ridge_1b}, ridge_2b={ridge_2b}, ridge_3b={ridge_3b}, "
+                                                f"curvature_2b={curvature_2b}, curvature_3b={curvature_3b}")
+                                            
+                                            model_filename = (f'composition_{composition}_energy_{energy}_force_{force}_'
+                                                            f'ridge1b_{ridge_1b}_ridge2b_{ridge_2b}_ridge3b_{ridge_3b}_'
+                                                            f'curv2b_{curvature_2b}_curv3b_{curvature_3b}')
+                                            
+                                            # Set the current regularizer values
+                                            regularizer = dict(ridge_1b=ridge_1b,
+                                                            ridge_2b=ridge_2b,
+                                                            ridge_3b=ridge_3b,
+                                                            curvature_2b=curvature_2b,
+                                                            curvature_3b=curvature_3b)
+                                            
+                                            # Clear memory and load base data
+                                            self.add_to_ignore_list('surface_energy2')
+                                            self.add_to_ignore_list('pressure')
+                                            self.add_to_ignore_list('Hexagonal')
+                                            self.add_to_ignore_list('gpu')
+                                            #self.add_to_ignore_list('surface_energy2')
+                                            self.clear_memory()
+                                            self.load_existing_base_data()
+                                            
+                                            # Generate filtered data
+                                            self.generate_new_filtered_data('structure', 'composition', False, composition_element, composition)
+                                            self.generate_new_filtered_data('structure', 'energy_above_hull', True, energy)
+                                            self.generate_new_filtered_data('structure', 'maximum_force', True, force, force, force)
+                                            #self.generate_new_filtered_data('structure', 'minimum_force', True, min_force, min_force, min_force)
+                                            self.generate_new_filtered_data('pressure', 'zero_force', False)
+                                            self.generate_new_filtered_data('Hexagonal', 'zero_force', False)
+                                            self.generate_new_filtered_data('gpu', 'zero_force', False)
+                                            
+                                            # Consolidate data
+                                            self.consolidate_data()
+                                            
+                                            # Split data into training and testing sets
+                                            training, testing = self.split_data(0.15)
+                                            
+                                            # Train the model with the current parameters and regularizers
+                                            chemical_system, trainer_model,bspline_config, features, model_filename = self.train_model(model_filename + ".json", training, testing, regularizer)
+                                            frame = self.get_data('structure_filtered.pkl')
+                                            for feature in features:
+                                                if 'structure' in feature:
+                                                    structure_feature = feature
+                                                    break
+                                            analyzer = ModelAnalyzer(chemical_system, trainer_model, bspline_config, frame, frame, structure_feature)                                      
+                                            # Export model to LAMMPS format
+                                            analyzer.export_model_to_lammps("potentials/", model_filename, "ntaormina", "metal", "nk")
+                                            analyzer.export_model_to_lammps(os.getcwd(), model_filename, "ntaormina", "metal", "nk")
+                                            
+                                            # Validate the model
+                                            validation_data = analyzer.validate_potential(model_filename, model_filename, ['Al', 'N'])
+                                            print(f"Model {model_filename} validation data: {validation_data}")
+                                            
+                                            # Store validation data
+                                            self.store_validation_data(model_filename, validation_data)
+                                            
+                                            # Remove potential file from current working directory
+                                            os.remove(f"{model_filename}")

@@ -1,4 +1,5 @@
 import os
+import re
 import shutil
 import numpy as np
 from pymatgen.io.vasp import Poscar, Outcar
@@ -50,6 +51,50 @@ class DFTDataParser:
         outcar = Outcar(filename)
         energy = outcar.final_energy
         return energy
+    def get_elastic_tensor(self, dft_path):
+        dft_data = {
+            "elastic_tensor": None,
+            "bulk_modulus_voigt": None,
+            "bulk_modulus_reuss": None,
+            "bulk_modulus_hill": None,
+            "shear_modulus_voigt": None,
+            "shear_modulus_reuss": None,
+            "shear_modulus_hill": None,
+        }
+        with open(dft_path, 'r') as file:
+            lines = file.readlines()
+            
+        elastic_tensor_start = False
+        elastic_tensor = []
+        for line in lines:
+            if "Stiffness Tensor C_ij (in GPa):" in line:
+                elastic_tensor_start = True
+                continue
+            if elastic_tensor_start:
+                if line.strip() == "":
+                    break
+                tensor_row = list(map(float, line.split()))
+                elastic_tensor.append(tensor_row)
+                
+        dft_data["elastic_tensor"] = elastic_tensor
+        
+        # Reading bulk and shear modulus (Voigt, Reuss, Hill)
+        for line in lines:
+            if "Bulk Modulus B (GPa)" in line:
+                match = re.search(r"\|\s+([\d\.]+)\s+\|\s+([\d\.]+)\s+\|\s+([\d\.]+)\s+\|", line)
+                if match:
+                    dft_data["bulk_modulus_voigt"] = float(match.group(1))
+                    dft_data["bulk_modulus_reuss"] = float(match.group(2))
+                    dft_data["bulk_modulus_hill"] = float(match.group(3))
+            
+            if "Shear Modulus G (GPa)" in line:
+                match = re.search(r"\|\s+([\d\.]+)\s+\|\s+([\d\.]+)\s+\|\s+([\d\.]+)\s+\|", line)
+                if match:
+                    dft_data["shear_modulus_voigt"] = float(match.group(1))
+                    dft_data["shear_modulus_reuss"] = float(match.group(2))
+                    dft_data["shear_modulus_hill"] = float(match.group(3))
+
+        return dft_data
     def poscarToLAMMPS(self, poscar, outputFilename):
         """
         Converts a VASP POSCAR/CONTCAR file to a LAMMPS data file.

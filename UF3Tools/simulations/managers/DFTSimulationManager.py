@@ -22,6 +22,7 @@ class DFTSimulationManager(SimulationManager):
         :param simulation_type: The type of simulation to set up (e.g., "relaxation").
         :param kwargs: Additional arguments needed for the specific simulation.
         """
+        print(f"Creating DFT simulation of type: {simulation_type.lower()}")
         if simulation_type.lower() == "relaxation":
             template_directory = os.path.join(self.parent_directory, "templates/lattice_parameters/")
             self.simulation = DFTRelaxationSimulation(self.simulation_dir, template_directory, **kwargs)
@@ -29,7 +30,8 @@ class DFTSimulationManager(SimulationManager):
             template_directory = os.path.join(self.parent_directory, "templates/surface_energy/")
             self.simulation = DFTSurfaceEnergySimulation(self.simulation_dir, template_directory, **kwargs)
         else:
-            raise ValueError(f"Simulation type '{simulation_type}' is not supported.")
+            template_directory = os.path.join(self.parent_directory, "templates/lattice_parameters/")
+            self.simulation = DFTRelaxationSimulation(self.simulation_dir, template_directory, **kwargs)
 
         # Set up the input file for the simulation
         self.simulation.setup_input_file()

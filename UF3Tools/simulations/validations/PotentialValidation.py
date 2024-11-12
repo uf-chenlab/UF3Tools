@@ -14,6 +14,8 @@ class PotentialValidation:
         self.dft_model_file = dft_model_file
         self.element_list = element_list
         self.use_dft = use_dft
+        self.has_dft_data = False
+        self.simulation_type = None
         
         #initialize folder structures
         self.original_directory = os.getcwd()
@@ -32,11 +34,13 @@ class PotentialValidation:
         Start the validation process by running the LAMMPS and DFT simulations.
         """
         lammps_results = self.lammps_manager.start_simulation(overwrite=overwrite, local=local)
-        if self.use_dft:
+        if (self.use_dft == True and self.has_dft_data == False):
             dft_results = self.dft_manager.start_simulation(overwrite=overwrite, local=local)
             
 
-        if lammps_results and self.use_dft and dft_results:
+        if lammps_results and ((self.use_dft and dft_results) or self.has_dft_data == True):
+            if self.has_dft_data:
+                dft_results = self.dft_result[self.simulation_type]
             percent_error = []
 
             for lammps, dft in zip(lammps_results, dft_results):
@@ -59,14 +63,14 @@ class PotentialValidation:
         elif simulation_type == "surface_energy":
             parser = DFTDataParser(path)
             self.dft_result[data_type] = parser.get_energy()
+        elif simulation_type == "elastic_tensor":
+            parser = DFTDataParser(path)
+            self.dft_result[data_type] = parser.get_elastic_tensor(path)
         else:
             raise ValueError(f"Simulation type '{simulation_type}' is not supported.")
+        self.has_dft_data = True
+        self.simulation_type = simulation_type
         
-
-
-    
-        
-
 
 class ValidationData:
     def __init__(self, potential_version, potential_file):

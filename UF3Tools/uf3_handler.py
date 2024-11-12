@@ -24,6 +24,10 @@ from pymatgen.io.ase import AseAtomsAdaptor
 from concurrent.futures import ProcessPoolExecutor
 from uf3.data import analyze
 import re
+from UF3Tools.simulations import *
+from UF3Tools.simulations.validations.PotentialValidation import PotentialValidation, ValidationData
+from UF3Tools.simulations.validations.LatticeConstantValidation import LatticeConstantValidation
+from UF3Tools.simulations.validations.ElasticTensorValidation import ElasticTensorValidation
 
 class RunDataPhaseDiagram:
     def __init__(self, path):
@@ -89,48 +93,78 @@ class DataParser:
 
     def parse_directories(self, output, filter=False):
         """
-        Parse all OUTCAR files in the specified directories and their subdirectories,
-        and store the parsed data in a DataFrame.
+        Recursively parse all OUTCAR files in the specified directories and their subdirectories,
+        and store the parsed data in a DataFrame. This continues indefinitely until manually stopped.
         """
         parsedFiles = 0
-        for directory in self.directories:
-
-            # Walk through the directory tree
-            for root, dirs, files in os.walk(directory):
-                
-                # Get the folder name; handle root directory
-                if root == directory:
-                    folder_name = os.path.basename(root.rstrip('/\\')) or os.path.basename(os.path.abspath(root))
-                else:
-                    folder_name = os.path.basename(root)
-
-                # Search for OUTCAR files in the current directory
-                outcar_files = glob.glob(os.path.join(root, 'OUTCAR*'))
-                
-                for file in outcar_files:
+        visited_directories = set()
+        
+        print(f"Processing {len(self.directories)} directories")
+        print(f"directories: {self.directories}")
+        
+        while True:
+            new_directories_found = False
+            
+            for directory in self.directories:
+                print(f"Processing directory: {directory}")
+                # Walk through the directory tree recursively
+                for root, dirs, files in os.walk(directory):
+                    # Check if the directory has already been processed
+                    if root in visited_directories:
+                        continue
+                    visited_directories.add(root)
                     if output:
-                        print(f"Processing file: {file}")
-                    try:
-                        # Extract the run number and index from the filename
-                        match = re.match(r'OUTCAR_(\d+)_(\d+)', os.path.basename(file))
-                        if match:
-                            run_number = match.group(1)
-                            index_number = match.group(2)
-                            prefix = f'ind_{folder_name}_run_{run_number}__{index_number}'
-                        else:
-                            # Default to use the entire file name if it doesn't match the expected pattern
-                            prefix = f'ind_{folder_name}_run_{os.path.basename(file)}'
-                        
-                        # Use the data_coordinator to parse the file and update the data.
-                        self.data_coordinator.dataframe_from_trajectory(file, prefix=prefix, filter=filter)
-                        parsedFiles += 1
-                    except Exception as e:
-                        print(f"Error processing {file}: {e}")
+                        print(f"Looking in folder: {os.getcwd()}")
+                    
+                    # Split the directory path and concatenate the relevant parent directories
+                    relative_path = os.path.relpath(root, directory)
+                    path_parts = relative_path.split(os.sep)
+                    folder_name = '_'.join([os.path.basename(directory)] + path_parts)
+                    
+                    # Search for OUTCAR files in the current directory
+                    outcar_files = glob.glob(os.path.join(root, 'OUTCAR*'))
+                    
+                    for file in outcar_files:
+                        if output:
+                            print(f"Processing file: {file}")
+                        try:
+                            # Extract the run number and index from the filename
+                            match = re.match(r'OUTCAR_(\d+)_(\d+)', os.path.basename(file))
+                            if match:
+                                run_number = match.group(1)
+                                index_number = match.group(2)
+                                prefix = f'ind_{folder_name}_run_{run_number}__{index_number}'
+                            else:
+                                print(f"Using default index naming: {os.path.basename(file)}")
+                                # Default to use the entire file name if it doesn't match the expected pattern
+                                prefix = f'ind_{root}_{folder_name}_run_{os.path.basename(file)}'
+                            
+                            # Use the data_coordinator to parse the file and update the data.
+                            # if prefix contains anything from the data type list, turn off the filter
+                            if filter:
+                                print("filter is on")
+                                for data_type in DataSetAnalyzer.DATA_TYPE_PREFIXES.values():
+                                    print("checking data type: ", data_type)
+                                    if data_type.lower() in prefix.lower():
+                                        print("turning off filter")
+                                        filter = False
+                                        break
+                            self.data_coordinator.dataframe_from_trajectory(file, prefix=prefix, filter=filter)
+                            parsedFiles += 1
+                        except Exception as e:
+                            print(f"Error processing {file}: {e}")
+
+                    # Mark that a new directory has been found and processed
+                    new_directories_found = True
+
+            if not new_directories_found:
+                break
 
         # Consolidate the data after processing all files.
         if parsedFiles > 0:
             self.data = self.data_coordinator.consolidate()
             self.check_and_convert_indices()
+
     def check_and_convert_indices(self):
         """
         Check if the DataFrame indices are in the correct format (ind_#_run_#__#).
@@ -230,8 +264,10 @@ class DataSetAnalyzer:
     DATA_TYPE_PREFIXES = {
         "pressure": "p_",
         "temperature": "t_",
+        "temperature": "T_",
         "strain": "strain_",
         "defect": "defect_",
+        "surface": "surface_",
         # Add more types as needed
     }
 
@@ -292,8 +328,8 @@ class DataSetAnalyzer:
         :param data_type: Type of data to retrieve (e.g., 'pressure', 'temperature').
         :return: DataFrame containing the specified type of data.
         """
-        if data_type in DataSetAnalyzer.DATA_TYPE_PREFIXES:
-            prefix = DataSetAnalyzer.DATA_TYPE_PREFIXES[data_type]
+        if data_type.lower() in DataSetAnalyzer.DATA_TYPE_PREFIXES.lower():
+            prefix = DataSetAnalyzer.DATA_TYPE_PREFIXES[data_type].lower()
             return self.data[self.data.index.str.contains(prefix)]
         else:
             raise ValueError(f"Data type '{data_type}' is not recognized. Available types: {list(DataSetAnalyzer.DATA_TYPE_PREFIXES.keys())}")
@@ -469,7 +505,7 @@ class StructureParser:
         :param data: DataFrame containing parsed data.
         """
         self.data = data
-        self.data = self.transform_data(data)
+        #self.data = self.transform_data(data)
     def create_comp(self, df):
         return Composition(df['composition'])
     def read_run_data(self, path):
@@ -492,10 +528,12 @@ class StructureParser:
         """
         return self.data.index.to_series().apply(lambda x: '_'.join(x.split('_')[:2])).unique()
     def transform_data(self, data):
+        #self.data['composition'] = self.data.apply(self.create_comp,axis=1)
         pde_entries = self.get_pde_entries(self.data)
         self.cpd = PhaseDiagram(pde_entries)
         self.append_phase_diagram_energy()
         self.append_energy_above_hull()
+        self.append_energy_per_atom()
         element_list = self.get_element_list()
         print(f"Elements in phase diagram: {element_list}")
         for element in element_list:
@@ -534,6 +572,8 @@ class StructureParser:
         :return: List of elements in the phase diagram.
         """
         return self.cpd.elements
+    def get_pdp(self):
+        return self.pdp
     def get_composition(self, df_row):
         """
         Returns the composition of the structure.
@@ -550,21 +590,13 @@ class StructureParser:
         :param df: DataFrame containing structure data.
         :return: List of PhaseDiagramEntry (PDEntry) objects.
         """
-        unique_data = self.get_unique_indices()
-        
-        
-        
         entries = []
-        for i in range(len(unique_data)):
-            index = unique_data[i]
-             # Find the first matching index that starts with the given index prefix
-            matching_index = next((x for x in self.data.index if x.startswith(f'{index}')), None)
-            if matching_index is not None:
-                row = self.data.loc[matching_index]
-                # Return the composition for the first matching index
-                comp = self.get_composition(row)
-                entry = PDEntry(comp, row.energy, name=str(row.name))
-                entries.append(entry)
+        for i in range(len(df)):
+            index = df.index[i]
+            comp = self.get_composition(df.loc[index])
+            entry = PDEntry(comp, df.loc[index].energy, name=str(index))
+            entries.append(entry)
+
         return entries
     def get_pde_single(self, df_row):
         """
@@ -641,7 +673,7 @@ class StructureParser:
         :return: Composition of the structure for the first matching index.
         """
         # Find the first matching index that starts with the given index prefix
-        matching_index = next((i for i in self.data.index if i.startswith(f'{index}')), None)
+        matching_index = index
         
         if matching_index is not None:
             # Return the composition for the first matching index
@@ -649,6 +681,19 @@ class StructureParser:
         else:
             # If no matching index is found, return None or raise an exception
             return None  # or raise an exception if that's more appropriate 
+    def get_energy_per_atom(self, df_row):
+        """
+        Returns the energy per atom of the structure.
+        :param df_row: Series containing structure data.
+        :return: Energy per atom of the structure.
+        """
+        comp = AseAtomsAdaptor().get_structure(df_row.geometry).composition
+        return df_row.energy / comp.num_atoms
+    def append_energy_per_atom(self):
+        """
+        Appends the energy per atom to the DataFrame.
+        """
+        self.data['energy_per_atom'] = self.data.apply(self.get_energy_per_atom, axis=1)
     
 
 
@@ -712,6 +757,25 @@ class DataFilter:
 
         else:
             print(f"Force columns not found in data. Please add columns for force. These should have come from the DFT OUTCAR.")
+    def filter_force_minimum(self, thresholdX, thresholdY, thresholdZ):
+        print(f"Filtering data for forces less than {thresholdX}, {thresholdY}, {thresholdZ}.")
+        print(f"Columns: {self.data.columns}")
+        #check if data has a force column or individual force columns
+        if 'force' in self.data.columns:
+            threshold = np.sqrt(thresholdX**2 + thresholdY**2 + thresholdZ**2)
+            self.data = self.data[self.data['force'] >= threshold]
+        elif 'forceX' in self.data.columns and 'forceY' in self.data.columns and 'forceZ' in self.data.columns:
+            self.data = self.data[self.data['forceX'] >= thresholdX]
+            self.data = self.data[self.data['forceY'] >= thresholdY]
+            self.data = self.data[self.data['forceZ'] >= thresholdZ]
+        elif 'fx' in self.data.columns and 'fy' in self.data.columns and 'fz' in self.data.columns:
+            self.data = self.data.loc[~self.data['fx'].apply(lambda x: any(abs(x) < thresholdX))]
+            self.data = self.data.loc[~self.data['fy'].apply(lambda x: any(abs(x) < thresholdY))]
+            self.data = self.data.loc[~self.data['fz'].apply(lambda x: any(abs(x) < thresholdZ))]
+
+        else:
+            print(f"Force columns not found in data. Please add columns for force. These should have come from the DFT OUTCAR.")
+            
     def remove_zero_force(self):
         """
         Remove data points with zero forces in all 3 directions.
@@ -814,7 +878,8 @@ class Featurizer:
         """
         # Check if the file already exists
         if os.path.exists(output_filename):
-            raise FileExistsError(f"The file '{output_filename}' already exists. Featurization aborted.")
+            print("Feature file already exists: {output_filename}")
+            return
         
         table_template = "features_{}"
         client = ProcessPoolExecutor(max_workers=num_cores)
@@ -903,25 +968,43 @@ class ModelTrainer:
         :return: List of unique indices.
         """
         return self.data.index.to_series().apply(lambda x: '_'.join(x.split('_')[:2])).unique()
-    def split_data(self, test_percent):
+    def split_data(self, test_percent, filter_index=True):
         """
         Split the data into training and testing sets.
+
+        Parameters:
+        - test_percent: Fraction of data to use for testing.
+        - filter_index: Boolean flag to determine whether or not to require indices
+        to be fully in either train or test.
         """
-        
+        # Get unique index prefixes
         index_prefixes = self.get_unique_indices()
+        
         np.random.seed(42)  # for reproducibility
         num_indices_to_select = int(test_percent * len(index_prefixes))
         selected_prefixes = np.random.choice(index_prefixes, num_indices_to_select, replace=False)
 
-        # Filter data for testing set based on the selected prefixes
-        self.testing_set = self.data[self.data.index.to_series().apply(lambda x: '_'.join(x.split('_')[:2])).isin(selected_prefixes)]
+        if filter_index:
+            # Filter data for testing set based on the selected prefixes
+            self.testing_set = self.data[self.data.index.to_series().apply(lambda x: '_'.join(x.split('_')[:2])).isin(selected_prefixes)]
 
-        # Filter data for training set
-        self.training_set = self.data[~self.data.index.isin(self.testing_set.index)]
-        self.train_keys= self.training_set.index
+            # Filter data for training set
+            self.training_set = self.data[~self.data.index.isin(self.testing_set.index)]
+        else:
+            # Shuffle and split data without filtering based on prefixes
+            shuffled_data = self.data.sample(frac=1, random_state=42)
+            split_point = int(len(shuffled_data) * (1 - test_percent))
+            self.training_set = shuffled_data.iloc[:split_point]
+            self.testing_set = shuffled_data.iloc[split_point:]
+
+        # Store the indices for training and testing sets
+        self.train_keys = self.training_set.index
+        self.test_keys = self.testing_set.index
+
         print(f"Training set length: {len(self.training_set)}. Testing set length: {len(self.testing_set)}")
         print(f"Training set columns: {self.training_set.columns}")
         return self.training_set, self.testing_set
+
     def export_train_to_pickle(self, filename):
         """
         Export the training set to a pickle file.
@@ -1002,7 +1085,7 @@ class ModelTrainer:
         return self.model
         
 class ModelAnalyzer:
-    def __init__(self, chemical_system, model, bspline_config, training_data, testing_data, feature_filename, r_cut = 10, bins = 0.01):
+    def __init__(self, chemical_system, model, bspline_config, training_data, testing_data, feature_filenames, r_cut = 10, bins = 0.01):
         """
         Initialize the ModelAnalyzer with a chemical system, model, and data.
 
@@ -1016,7 +1099,7 @@ class ModelAnalyzer:
         self.training_keys = training_data.index
         self.testing_data = testing_data
         self.testing_keys = testing_data.index
-        self.feature_filename = feature_filename
+        self.feature_filenames = feature_filenames
         self.r_cut = r_cut
         self.bins = bins
         self.bspline_config = bspline_config
@@ -1034,6 +1117,8 @@ class ModelAnalyzer:
         analysis = self.analyzer.analyze()
         for element_list in self.chemical_system.interactions_map[2]:
             self.analyze_2b(element_list, analysis)
+        for element_list in self.chemical_system.interactions_map[3]:
+            self.analyze_3b(element_list, self.model)
         self.test_model_prediction(training = training)
         self.generate_parity_plots()
         
@@ -1052,7 +1137,17 @@ class ModelAnalyzer:
         plt.vlines([0.0], -100, 100, color="orange", linewidth=2)
         ax.set_ylim(-0.8, 0.4)
         ax.set_xlim(0,6)
+        plt.show()
         return solutions
+    def analyze_3b(self, element_list, model):
+        #get all combinations of 3 body terms in element list 
+        print(f"Analyzing 3-body interactions for {element_list}")
+        tbp = plotting3d.ThreeBodyPlotter(model, element_list)
+        tbp.sample_uniformly(20)
+        plot = tbp.plot_uniform(val_limit=0.25)
+        plot.show()
+            
+        
     def test_model_prediction(self, training=False):
         """
         Test the model prediction.
@@ -1062,7 +1157,7 @@ class ModelAnalyzer:
         else:
             keys = self.testing_keys
 
-        y_e, p_e, y_f, p_f, rmse_e, rmse_f = self.model.batched_predict(self.feature_filename, 
+        y_e, p_e, y_f, p_f, rmse_e, rmse_f = self.model.batched_predict(self.feature_filenames, 
                                                                          keys=keys)
 
         # Store results in a dictionary
@@ -1122,9 +1217,10 @@ class ModelAnalyzer:
         lattice_percent_error = lattice_constant.start_validation(overwrite=True, local=False)
         data.add_validation("lattice_constant", lattice_percent_error)
         os.chdir(current_directory)
-        # langevin = LangevinValidation(potential_file, model_file, dft_file, element_list_str, npt_enable='')
-        # langevin_percent_error = langevin.start_validation(overwrite=True, local=False)
-        # data.add_validation("langevin", langevin_percent_error)
+        tensor = ElasticTensorValidation(potential_file, model_file, dft_file, element_list_str)
+        tensor.retrieve_dft_result("elastic_tensor", "elastic_tensor", "/home/ntaormina/ypchen/ntaormina/uf3/AlN/test_auto/UF3-Tools/validation/dft/ElasticTensor/vaspkit/results.txt")
+        tensor_percent_error = tensor.start_validation(overwrite=True, local=False)
+        data.add_validation("elastic_tensor", tensor_percent_error)
         return data
 
 from datetime import datetime     
@@ -1170,6 +1266,7 @@ class UF3LammpsPotentialGenerator:
         # Check if file exists and add a timestamp if necessary
         if os.path.exists(full_path):
             current_datetime = datetime.now().strftime("%Y%m%d_%H%M%S")
+            print(f'current datetime: {current_datetime}')
             filename = filename + "_" + current_datetime
             full_path = os.path.join(directory, filename)
 
