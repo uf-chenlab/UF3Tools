@@ -52,9 +52,6 @@ class SurfaceEnergyValidation(PotentialValidation):
             dft_results = self.dft_manager.start_simulation(overwrite=overwrite, local=local)
 
         dft_results['surface_energy'] = (dft_results['free'] - dft_results['bulk'])/(2*area)
-        # Compare the results
-        print(f"LAMMPS results: {lammps_results}")
-        print(f"DFT results: {dft_results}")
         
         
 

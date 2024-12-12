@@ -151,5 +151,3 @@ class DFTDataParser:
             for i, site in enumerate(structure.sites, start=1):
                 atom_type = species_list.index(site.species_string) + 1
                 file.write(f"{i} {atom_type} {site.x:.6f} {site.y:.6f} {site.z:.6f}\n")
-
-        print(f"LAMMPS data file '{outputFilename}' has been created.")

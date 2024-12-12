@@ -22,7 +22,6 @@ class DFTSimulationManager(SimulationManager):
         :param simulation_type: The type of simulation to set up (e.g., "relaxation").
         :param kwargs: Additional arguments needed for the specific simulation.
         """
-        print(f"Creating DFT simulation of type: {simulation_type.lower()}")
         if simulation_type.lower() == "relaxation":
             template_directory = os.path.join(self.parent_directory, "templates/lattice_parameters/")
             self.simulation = DFTRelaxationSimulation(self.simulation_dir, template_directory, **kwargs)
@@ -65,7 +64,6 @@ class DFTSimulationManager(SimulationManager):
 
         # Register the renamed file in the simulation directory
         super().register_simulation_file(target_file)
-        print(f"Model file '{model_file}' copied and renamed to {target_file} in the simulation directory.")
         #remove the temporary data.lammps
         os.remove(target_file)
      

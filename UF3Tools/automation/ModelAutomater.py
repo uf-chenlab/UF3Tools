@@ -11,6 +11,8 @@ class ModelAutomater:
             'maximum_force': 'filter_force',
             'zero_force': 'remove_zero_force',
             'minimum_force': 'filter_force_minimum',
+            'reduce_points': 'filter_reduce_data_points',
+            'increase_points': 'filter_increase_data_points',
             'none': 'get_data'
             # Add new filters here as needed
         }
@@ -39,12 +41,48 @@ class ModelAutomater:
         self.data_ignore_list = []
         self.validation_datas = []
         self.index_patterns = {}
+        self.initialize_directories()
+        self.banned_name_list = ['cubic', 'hexagonal', 'fcc', 'bcc', 'hcp', 'diamond', 'graphite', 'amorphous', 'liquid', 'surface_energy',]
         
         # Load existing data
         self.load_existing_base_data()
         self.load_existing_features()
         
-
+    def initialize_directories(self, base_path="."):
+        directories = [
+            os.path.join(base_path, "data"),
+            os.path.join(base_path, "data", "archive"),
+            os.path.join(base_path, "data", "featurized"),
+            os.path.join(base_path, "data", "pickle_files"),
+            os.path.join(base_path, "data", "pickle_files", "filtered"),
+            
+            os.path.join(base_path, "generation"),
+            
+            os.path.join(base_path, "validation"),
+            os.path.join(base_path, "validation", "dft"),
+            os.path.join(base_path, "validation", "dft", "basic_files"),
+            os.path.join(base_path, "validation", "dft", "simulations"),
+            os.path.join(base_path, "validation", "dft", "simulations", "ElasticTensor"),
+            os.path.join(base_path, "validation", "dft", "simulations", "RelaxationSimulation"),
+            os.path.join(base_path, "validation", "dft", "simulations", "SurfaceEnergySimulation"),
+            os.path.join(base_path, "validation", "dft", "templates"),
+            
+            os.path.join(base_path, "validation", "lammps"),
+            os.path.join(base_path, "validation", "lammps", "basic_files"),
+            os.path.join(base_path, "validation", "lammps", "simulations"),
+            os.path.join(base_path, "validation", "lammps", "simulations", "ElasticTensor"),
+            os.path.join(base_path, "validation", "lammps", "simulations", "RelaxationSimulation"),
+            os.path.join(base_path, "validation", "lammps", "simulations", "SurfaceEnergySimulation"),
+            os.path.join(base_path, "validation", "lammps", "templates"),
+            
+            # We only create the top-level structures folder,
+            # no sub-directories inside structures.
+            os.path.join(base_path, "validation", "structures")
+        ]
+    
+        # Create each directory if it doesn't exist
+        for directory in directories:
+            os.makedirs(directory.lower(), exist_ok=True)
     def load_existing_data(self, directory):
         """
         Load existing data from the specified directory, ignoring files that match data types in data_ignore_list.
@@ -75,17 +113,54 @@ class ModelAutomater:
         return data_parser.get_data()
                 
     def load_new_base_data(self, filter=True):
-        print(self.directories)
         for directory in self.directories:
-            print("looking in directory: ", directory)
             data_parser = DataParser([directory], self.data_coordinator)
             data_parser.parse_directories(output=True, filter=filter)
-            # Export to pickle with the same name as the directory
-            filename = directory.split('/')[-1]
-            print(f"folder filename: {filename} : {directory}")
-            data_parser.export_to_pickle(self.pickle_directory + filename + '.pkl')
-        self.load_existing_data()
+            
+            # Generate initial filename from the directory name
+            filename = directory.split('/')[-1] or directory.split('/')[-2]
 
+            # Check for banned names and duplicate files
+            path_parts = directory.split('/')
+            index = -1
+            while filename in self.banned_name_list or \
+                (self.pickle_directory + filename + '.pkl') in self._get_existing_pickle_files():
+                index -= 1
+                filename = path_parts[index] if -index <= len(path_parts) else f"unnamed_{abs(index)}"
+
+            # Export to pickle with the resolved filename
+            data_parser.export_to_pickle(self.pickle_directory + filename + '.pkl')
+        
+        self.load_existing_base_data()
+
+    # Helper function to retrieve existing pickle files in the directory
+    def _get_existing_pickle_files(self):
+        import os
+        return set(f for f in os.listdir(self.pickle_directory) if f.endswith('.pkl'))
+
+    def load_new_base_data_with_names(self, names, filter=True):
+        if len(names) != len(self.directories):
+            raise ValueError("The number of names must match the number of directories.")
+
+        for directory, name in zip(self.directories, names):
+            data_parser = DataParser([directory], self.data_coordinator)
+            data_parser.parse_directories(output=True, filter=filter)
+
+            # Use provided name as the filename
+            filename = name
+
+            # Check for banned names and duplicate files
+            path_parts = directory.split('/')
+            index = -1
+            while filename in self.banned_name_list or \
+                (self.pickle_directory + filename + '.pkl') in self._get_existing_pickle_files():
+                index -= 1
+                filename = path_parts[index] if -index <= len(path_parts) else f"unnamed_{abs(index)}"
+
+            # Export to pickle with the resolved filename
+            data_parser.export_to_pickle(self.pickle_directory + filename + '.pkl')
+
+        self.load_existing_base_data()
     def load_existing_base_data(self):
         """
         Load base data while ignoring data types in data_ignore_list.
@@ -111,7 +186,6 @@ class ModelAutomater:
         return self.data_frames
     
     def get_data(self, data_type):
-        print(self.filtered_data_frames)
         return self.filtered_data_frames[data_type]
     
     def get_feature_paths(self):
@@ -307,11 +381,9 @@ class ModelAutomater:
         - filter_index: Boolean flag to determine whether or not to require indices
         to be fully in either train or test.
         """
-        print(self.model_data)
 
         # Get unique index prefixes
         index_prefixes = self.get_unique_indices(self.model_data)
-        print(f"Unique prefixes: {index_prefixes}")
 
         np.random.seed(42)  # for reproducibility
         num_indices_to_select = int(test_percent * len(index_prefixes))
@@ -380,7 +452,6 @@ class ModelAutomater:
         else:
             trainer.train_model_multiple_files(features, weight, batch_size)
         trainer.export_model(model_filename + ".json")
-        print(structure_feature)
         #analyzer = ModelAnalyzer(self.chemical_system, trainer.get_model(), trainer.get_bspline_config(), training_data, structure, structure_feature)
         return self.chemical_system, trainer.get_model(), trainer.get_bspline_config(), features, model_filename
     def store_validation_data(self, model_filename, validation_data):
@@ -397,11 +468,12 @@ class ModelAutomater:
         with open('validation_datas.txt', 'w') as f:
             print(f"writing validation data to file")
             print(self.validation_datas)
-            for data in self.validation_datas:
-                f.write(str(data) + '\n')
-                f.flush()
-                print(f"writing data: {str(data)}")
-                print(f"writing data: {str(data.__str__())}")
+            for data2 in self.validation_datas:
+                for data in data2:
+                    f.write(str(data) + '\n')
+                    f.flush()
+                    print(f"writing data: {str(data)}")
+                    print(f"writing data: {str(data.__str__())}")
         
     def get_all_dataframes(self):
         """
@@ -525,9 +597,9 @@ class ModelAutomater:
                                             
                                             # Clear memory and load base data
                                             self.add_to_ignore_list('surface_energy2')
-                                            self.add_to_ignore_list('pressure')
+                                            #self.add_to_ignore_list('pressure')
                                             self.add_to_ignore_list('Hexagonal')
-                                            self.add_to_ignore_list('gpu')
+                                            #self.add_to_ignore_list('gpu')
                                             #self.add_to_ignore_list('surface_energy2')
                                             self.clear_memory()
                                             self.load_existing_base_data()
@@ -536,10 +608,11 @@ class ModelAutomater:
                                             self.generate_new_filtered_data('structure', 'composition', False, composition_element, composition)
                                             self.generate_new_filtered_data('structure', 'energy_above_hull', True, energy)
                                             self.generate_new_filtered_data('structure', 'maximum_force', True, force, force, force)
-                                            #self.generate_new_filtered_data('structure', 'minimum_force', True, min_force, min_force, min_force)
-                                            self.generate_new_filtered_data('pressure', 'zero_force', False)
-                                            self.generate_new_filtered_data('Hexagonal', 'zero_force', False)
+                                            self.generate_new_filtered_data('pressure', 'increase_points', False, 500)
                                             self.generate_new_filtered_data('gpu', 'zero_force', False)
+                                            self.generate_new_filtered_data('gpu', 'reduce_points', False, 1000)
+                                            self.generate_new_filtered_data('vaspkit', 'zero_force', False)
+                                            self.generate_new_filtered_data('vaspkit', 'increase_points', False, 1000)
                                             
                                             # Consolidate data
                                             self.consolidate_data()

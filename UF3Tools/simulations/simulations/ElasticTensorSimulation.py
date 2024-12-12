@@ -49,7 +49,6 @@ class ElasticTensorSimulation:
         return results_exists
     
     def process_simulation_results(self):
-        print("Processing elastic tensor simulation results...")
         
         #initialize 
         lammps_data = {

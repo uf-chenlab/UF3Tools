@@ -65,7 +65,6 @@ class LammpsSimulationManager(SimulationManager):
 
         # Register the renamed file in the simulation directory
         super().register_simulation_file(target_file)
-        print(f"Model file '{model_file}' copied and renamed to 'data.lammps' in the simulation directory.")
         #remove the temporary data.lammps
         os.remove(target_file)
         

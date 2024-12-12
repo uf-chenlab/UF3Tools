@@ -12,11 +12,8 @@ class SimulationManager:
 
         :param parent_directory: Path to the parent directory where simulations will be set up.
         """
-        print(os.getcwd())
-        print(f"parent_directory={parent_directory}")
         self.parent_directory = os.path.join(os.getcwd(), parent_directory)
         self.root_directory = os.path.join(self.parent_directory, "simulations/")
-        print(f"Parent directory: {self.parent_directory}")
         self.basic_files_directory = None
 
     def setup_simulation(self, simulation_type, **kwargs):
@@ -28,7 +25,6 @@ class SimulationManager:
         
         # Set up the simulation directory path
         self.simulation_dir = os.path.join(self.root_directory, formatted_simulation_type + "Simulation")
-        print(f"Simulation dir: {self.simulation_dir}")
 
         # Create the simulation directory if it doesn't exist
         if not os.path.exists(self.simulation_dir):
@@ -97,11 +93,9 @@ class SimulationManager:
         """
         original_directory = os.getcwd()
         os.chdir(self.simulation_dir)
-        print(f"simulation dir: {self.simulation_dir}...")
         
         # Get list of all subdirectories in the simulation directory
         subdirectories = [d for d in os.listdir() if os.path.isdir(d) and not d.startswith(".")]
-        print(f"subdirectories: {subdirectories}")
         #remove directories that start with "."
         #subdirectories = [d for d in subdirectories if not d.startswith(".")]
         
@@ -110,17 +104,15 @@ class SimulationManager:
         # If there are no subdirectories, just run the simulation in the current directory
         if not subdirectories:
             subdirectories = [self.simulation_dir]
-        print(f"subdirectories: {subdirectories}")
         # Iterate through each subdirectory and run the simulation if required
         for subdir in subdirectories:
             os.chdir(subdir)
-            print(f"Running simulation in {subdir}...")
             
             if self.simulation.check_existing_results() and not overwrite:
-                print(f"Existing results found in {subdir}. Using existing results...")
+                #print(f"Existing results found in {subdir}. Using existing results...")
+                continue
             else:
-                print(f"Running a new simulation in {subdir}...")
-                subprocess.run(command, shell=True)
+                subprocess.run(command, shell=True,stdout=subprocess.DEVNULL)
             os.chdir(self.simulation_dir)  # Go back to the main simulation directory
         
         result = self.simulation.process_simulation_results()
@@ -129,7 +121,6 @@ class SimulationManager:
         os.chdir(original_directory)  # Go back to the original directory
         
         # Combine or process all results as needed here, or return them as a list
-        print(f"results: {results}")
         return results
     def find_basic_files_directory(self):
         basic_files_dir = "basic_files"
@@ -155,7 +146,6 @@ class SimulationManager:
             self.find_basic_files_directory()  
         destination_file = os.path.join(self.basic_files_directory, file_name)
         shutil.copyfile(file_name, destination_file)
-        print(f"Registered basic file '{file_name}' into the basic_files directory.")
     def register_simulation_file(self, file_name):
         """
         Insert a simulation file into the simulation directory.
@@ -174,7 +164,6 @@ class SimulationManager:
                 if not os.path.exists(destination_dir):
                     os.makedirs(destination_dir)
                 shutil.copy(file_name, destination_file)
-                print(f"Registered simulation file '{file_name}' into subdirectory '{subdir}' of the simulation directory.")
         else:
             # If there are no subdirectories, copy the file directly into simulation_dir
             destination_file = os.path.join(self.simulation_dir, file_name)
@@ -182,7 +171,6 @@ class SimulationManager:
             if not os.path.exists(destination_dir):
                 os.makedirs(destination_dir)
             shutil.copy(file_name, destination_file)
-            print(f"Registered simulation file '{file_name}' into the simulation directory.")
     def perform_model_modification(self):
         """
         Perform any necessary model modifications before running the simulation.

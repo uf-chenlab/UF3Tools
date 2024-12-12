@@ -59,7 +59,6 @@ class RelaxationSimulation:
         """
         Process the results of the relaxation simulation.
         """
-        print("Processing simulation results...")
         
         # Initialize an empty dictionary to store lattice parameters
         lattice_parameters = {}
@@ -81,7 +80,6 @@ class RelaxationSimulation:
             lattice_parameters['beta'] = float(match.group(5))
             lattice_parameters['gamma'] = float(match.group(6))
             self.lattice_parameters = lattice_parameters
-            print("Lattice parameters extracted successfully:", lattice_parameters)
         else:
             print("Error: Lattice parameters could not be extracted. Please check the format of lattice.txt.")
 
@@ -139,7 +137,6 @@ class DFTRelaxationSimulation():
         """
         Process the results of the relaxation simulation.
         """
-        print("Processing simulation results...")
         
         parser = DFTDataParser(self.simulation_directory)
         lattice_parameters = parser.get_lattice_constants()

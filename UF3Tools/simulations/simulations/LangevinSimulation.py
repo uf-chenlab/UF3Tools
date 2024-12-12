@@ -65,7 +65,6 @@ class LangevinSimulation:
         """
         Process the results of the relaxation simulation.
         """
-        print("Processing simulation results...")
         
 
         return {'result': '1'}

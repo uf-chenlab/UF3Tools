@@ -28,7 +28,8 @@ from UF3Tools.simulations import *
 from UF3Tools.simulations.validations.PotentialValidation import PotentialValidation, ValidationData
 from UF3Tools.simulations.validations.LatticeConstantValidation import LatticeConstantValidation
 from UF3Tools.simulations.validations.ElasticTensorValidation import ElasticTensorValidation
-
+from UF3Tools.common.MPAPIKey import MP_API_KEY
+from UF3Tools.common.StructureDownloader import StructureDownloader
 class RunDataPhaseDiagram:
     def __init__(self, path):
         self.path = path
@@ -99,14 +100,10 @@ class DataParser:
         parsedFiles = 0
         visited_directories = set()
         
-        print(f"Processing {len(self.directories)} directories")
-        print(f"directories: {self.directories}")
-        
         while True:
             new_directories_found = False
             
             for directory in self.directories:
-                print(f"Processing directory: {directory}")
                 # Walk through the directory tree recursively
                 for root, dirs, files in os.walk(directory):
                     # Check if the directory has already been processed
@@ -144,9 +141,7 @@ class DataParser:
                             if filter:
                                 print("filter is on")
                                 for data_type in DataSetAnalyzer.DATA_TYPE_PREFIXES.values():
-                                    print("checking data type: ", data_type)
                                     if data_type.lower() in prefix.lower():
-                                        print("turning off filter")
                                         filter = False
                                         break
                             self.data_coordinator.dataframe_from_trajectory(file, prefix=prefix, filter=filter)
@@ -222,7 +217,6 @@ class DataParser:
         :param filename: Name of the pickle file.
         """
         self.data.to_pickle(filename)
-        print(f'DataFrame has been saved to {filename}')
     
     def load_from_pickle(self, filename):
         """
@@ -231,7 +225,6 @@ class DataParser:
         :param filename: Name of the pickle file.
         """
         self.data = pd.read_pickle(filename)
-        print(f'DataFrame has been loaded from {filename}')
     def get_data(self):
         
         """
@@ -430,7 +423,6 @@ class DataSetAnalyzer:
         :param filename: Name of the pickle file.
         """
         self.data.to_pickle(filename)
-        print(f'DataFrame has been saved to {filename}')
     
     def plot_eah_histogram(self, bins=20, alpha=0.5, upper_bound=None, lower_bound=None):
         """
@@ -563,7 +555,6 @@ class StructureParser:
         :param filename: Name of the pickle file.
         """
         self.data.to_pickle(filename)
-        print(f'DataFrame has been saved to {filename}')
         
     def get_element_list(self):
         """
@@ -721,7 +712,15 @@ class DataFilter:
         :param data: DataFrame containing parsed data.
         """
         self.data = data
-        
+    def filter_reduce_data_points(self, num_points):
+        print(f"Reducing data from {len(self.data)} points to {num_points} points.")
+        self.data = self.data.sample(n=num_points)
+    def filter_increase_data_points(self, num_points):
+        additional_rows_needed = num_points - len(self.data)
+        print(f"Increasing data from {len(self.data)} points to {num_points} points.")
+        if additional_rows_needed > 0:
+            additional_data = self.data.sample(n=additional_rows_needed, replace=True)
+            self.data = pd.concat([self.data, additional_data], ignore_index=False)
         
     def filter_composition(self, element, percent):
         print(f"Filtering out data with over {percent*100}% {element} composition.")
@@ -741,7 +740,6 @@ class DataFilter:
         
     def filter_force(self, thresholdX, thresholdY, thresholdZ):
         print(f"Filtering data for forces less than {thresholdX}, {thresholdY}, {thresholdZ}.")
-        print(f"Columns: {self.data.columns}")
         #check if data has a force column or individual force columns
         if 'force' in self.data.columns:
             threshold = np.sqrt(thresholdX**2 + thresholdY**2 + thresholdZ**2)
@@ -759,7 +757,6 @@ class DataFilter:
             print(f"Force columns not found in data. Please add columns for force. These should have come from the DFT OUTCAR.")
     def filter_force_minimum(self, thresholdX, thresholdY, thresholdZ):
         print(f"Filtering data for forces less than {thresholdX}, {thresholdY}, {thresholdZ}.")
-        print(f"Columns: {self.data.columns}")
         #check if data has a force column or individual force columns
         if 'force' in self.data.columns:
             threshold = np.sqrt(thresholdX**2 + thresholdY**2 + thresholdZ**2)
@@ -795,7 +792,6 @@ class DataFilter:
         :param filename: Name of the pickle file.
         """
         self.data.to_pickle(filename)
-        print(f'DataFrame has been saved to {filename}')
         
 
 class Featurizer:
@@ -1002,7 +998,6 @@ class ModelTrainer:
         self.test_keys = self.testing_set.index
 
         print(f"Training set length: {len(self.training_set)}. Testing set length: {len(self.testing_set)}")
-        print(f"Training set columns: {self.training_set.columns}")
         return self.training_set, self.testing_set
 
     def export_train_to_pickle(self, filename):
@@ -1100,9 +1095,25 @@ class ModelAnalyzer:
         self.testing_data = testing_data
         self.testing_keys = testing_data.index
         self.feature_filenames = feature_filenames
+        self.dft_validation_structures = []
+        self.lammps_validation_structures = []
         self.r_cut = r_cut
         self.bins = bins
         self.bspline_config = bspline_config
+    def set_dft_validation_structures(self, dft_validation_structures):
+        """
+        Set the DFT validation structures.
+
+        :param dft_validation_structures: List of DFT validation structures.
+        """
+        self.dft_validation_structures = dft_validation_structures
+    def set_lammps_validation_structures(self, lammps_validation_structures):
+        """
+        Set the LAMMPS validation structures.
+
+        :param lammps_validation_structures: List of LAMMPS validation structures.
+        """
+        self.lammps_validation_structures = lammps_validation_structures
     def analyze_model(self, r_cut = 10.0, bins = 0.01, training = False):
         """
         Analyze the model.
@@ -1201,27 +1212,112 @@ class ModelAnalyzer:
         """
         generator = UF3LammpsPotentialGenerator(self.model, self.chemical_system, self.bspline_config)
         generator.generate_potential_file(directory=directory, filename=filename, author=author, units=units, knots_spacing_type=knots_spacing_type)
-        
+
+    def set_up_folder_structure(self):
+        current_directory = os.getcwd()
+        validation_folder_path = os.path.join(current_directory, "validation")
+        if not os.path.exists(validation_folder_path):
+            os.makedirs(validation_folder_path)
+        structures_folder_path = os.path.join(validation_folder_path, "structures")
+        if not os.path.exists(structures_folder_path):
+            os.makedirs(structures_folder_path)
+        else:
+            #make dft and lammps folders within every structure folder
+            for structure in self.dft_validation_structures:
+                structure_folder_path = os.path.join(structures_folder_path, structure)
+                dft_folder_path = os.path.join(structure_folder_path, "dft")
+                if not os.path.exists(dft_folder_path):
+                    os.makedirs(dft_folder_path)
+                lammps_folder_path = os.path.join(structure_folder_path, "lammps")
+                if not os.path.exists(lammps_folder_path):
+                    os.makedirs(lammps_folder_path)
+        return validation_folder_path
+    def retrieve_model_files(self):
+        if self.dft_validation_structures:
+            for structure in self.dft_validation_structures:
+                #get the mp id from the structure name (its in format POSCAR_mpid)
+                mpid = structure
+                directory = os.path.join("validation/structures/", structure)
+                structure_downloader = StructureDownloader(MP_API_KEY)
+                structure_downloader.download_single_structure(mpid, directory)
+                
+                
     def validate_potential(self, potential_version, potential_file, element_list):
         """
-        Validate the potential.
+        Validate the potential dynamically using LAMMPS and DFT files 
+        identified from the validation folder structure and file names.
         """
         current_directory = os.getcwd()
-        model_file = "model_file.lmp"
-        dft_file = "POSCAR_661"
-        element_list_str = ""
-        for element in element_list:
-            element_list_str += f"{element} "
-        data = ValidationData(potential_version, potential_file)
-        lattice_constant = LatticeConstantValidation(potential_file, model_file, dft_file, element_list_str)
-        lattice_percent_error = lattice_constant.start_validation(overwrite=True, local=False)
-        data.add_validation("lattice_constant", lattice_percent_error)
-        os.chdir(current_directory)
-        tensor = ElasticTensorValidation(potential_file, model_file, dft_file, element_list_str)
-        tensor.retrieve_dft_result("elastic_tensor", "elastic_tensor", "/home/ntaormina/ypchen/ntaormina/uf3/AlN/test_auto/UF3-Tools/validation/dft/ElasticTensor/vaspkit/results.txt")
-        tensor_percent_error = tensor.start_validation(overwrite=True, local=False)
-        data.add_validation("elastic_tensor", tensor_percent_error)
-        return data
+        datas = []
+        print("printing validation structures")
+        for structure in self.dft_validation_structures:
+            print(structure)
+        print("done printing the structures")
+        for structure in self.dft_validation_structures:
+            if "POSCAR" in structure:
+                print("contains POSCAR")
+                continue
+            if "LAMMPS" in structure:
+                print("contains LAMMPS")
+                continue
+            # Extract the Materials Project ID from the structure name
+            print("for structure in structure")
+            print(structure)
+    
+            structure_id = structure.replace("mp-", "")
+
+            # Define paths for LAMMPS and DFT files
+            validation_folder_path = os.path.join(current_directory, "validation/structures", structure)
+            print("validation folder path")
+            print(validation_folder_path)
+            lammps_file = os.path.join(validation_folder_path, f"LAMMPS_{structure_id}.data")
+            dft_file = os.path.join(validation_folder_path, f"POSCAR_{structure_id}")
+
+            # Validate that the files exist
+            if not os.path.isfile(lammps_file):
+                print(f"LAMMPS file not found for structure {structure_id}: {lammps_file}")
+                continue
+            if not os.path.isfile(dft_file):
+                print(f"DFT file not found for structure {structure_id}: {dft_file}")
+                continue
+
+            # Add the files to the validation lists
+            if dft_file not in self.dft_validation_structures:
+                print("appending dft_file")
+                print(dft_file)
+                self.dft_validation_structures.append(dft_file)
+            if lammps_file not in self.lammps_validation_structures:
+                print("appending lammps file")
+                print(lammps_file)
+                self.lammps_validation_structures.append(lammps_file)
+
+            # Create the element list as a space-separated string
+            element_list_str = " ".join(element_list)
+
+            # Initialize ValidationData
+            data = ValidationData(potential_version, potential_file, structure_id)
+
+            # Lattice Constant Validation
+            lattice_constant = LatticeConstantValidation(potential_file, lammps_file, dft_file, element_list_str)
+            dft_lattice_path = os.path.join(validation_folder_path, "dft/simulations/RelaxationSimulation/")
+            lattice_constant.retrieve_dft_result("lattice_constant", "lattice_constant", dft_lattice_path)
+            lattice_percent_error = lattice_constant.start_validation(overwrite=True, local=False)
+            data.add_validation("lattice_constant", lattice_percent_error)
+
+            # Elastic Tensor Validation
+            tensor = ElasticTensorValidation(potential_file, lammps_file, dft_file, element_list_str)
+            dft_tensor_path = os.path.join(validation_folder_path, "dft/simulations/ElasticTensor/results.txt")
+            tensor.retrieve_dft_result("elastic_tensor", "elastic_tensor", dft_tensor_path)
+            tensor_percent_error = tensor.start_validation(overwrite=True, local=False)
+            data.add_validation("elastic_tensor", tensor_percent_error)
+
+            # Append the validation data
+            datas.append(data)
+
+            # Return to the initial directory after processing each structure
+            os.chdir(current_directory)
+
+        return datas
 
 from datetime import datetime     
 class UF3LammpsPotentialGenerator:
@@ -1266,7 +1362,6 @@ class UF3LammpsPotentialGenerator:
         # Check if file exists and add a timestamp if necessary
         if os.path.exists(full_path):
             current_datetime = datetime.now().strftime("%Y%m%d_%H%M%S")
-            print(f'current datetime: {current_datetime}')
             filename = filename + "_" + current_datetime
             full_path = os.path.join(directory, filename)
 
@@ -1278,9 +1373,6 @@ class UF3LammpsPotentialGenerator:
         lines += "pair_coeff\t* * " + full_path + " "
         lines += " ".join(self.chemical_system.element_list)
 
-        print("\n\n***Add the following line to the LAMMPS input script***\n\n")
-        print(lines)
-        print("\n\nCitation meta-data has been left blank. Please enter appropriate citation for the generated UF3 LAMMPS potential\n\n")
 
     def _write_uf3_lammps_pot_files(self, full_path, author, lammps_units, knots_spacing_type):
         """

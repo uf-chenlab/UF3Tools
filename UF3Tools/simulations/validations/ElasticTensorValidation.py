@@ -40,17 +40,14 @@ class ElasticTensorValidation(PotentialValidation):
         """
         Start the validation process by running the LAMMPS and DFT simulations and comparing results.
         """
+        self.lammps_manager.set_potential_file(self.potential_file)
+        self.lammps_manager.set_model_file(self.lammps_model_file)
         lammps_results = self.lammps_manager.start_simulation(overwrite=overwrite, local=local)
 
         # Proceed if both LAMMPS and DFT data are available (either newly run or from stored data)
         if lammps_results and ((self.use_dft and dft_results) or self.has_dft_data == True):
             if self.has_dft_data:
                 dft_results = self.dft_result[self.simulation_type]
-
-            # Extract and print results for debugging
-            print("LAMMPS Results:", lammps_results[0])
-            print("DFT Results:", dft_results)
-            
             # Initialize the list for percent errors
             percent_error = []
 
@@ -74,10 +71,6 @@ class ElasticTensorValidation(PotentialValidation):
             for key in dft_elastic_tensor_dict:
                 lammps_value = lammps_elastic_tensor.get(key, None)
                 dft_value = dft_elastic_tensor_dict.get(key, None)
-                print("dft value: ")
-                print(dft_value)
-                print("lammps value: ")
-                print(lammps_value)
 
                 # Calculate percent error if both LAMMPS and DFT values exist
                 if lammps_value is not None and dft_value is not None:

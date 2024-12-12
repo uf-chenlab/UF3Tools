@@ -24,4 +24,3 @@ class LammpsInputFileHandler():
         with open(self.output_file, 'w') as file:
             file.write(file_content)
 
-        print(f"Template edited and saved to {self.output_file}")

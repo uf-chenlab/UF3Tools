@@ -68,7 +68,6 @@ class SurfaceEnergyBulkSimulation:
 
             if energy_match:
                 energy = float(energy_match.group(1))
-                print("Surface energy extracted successfully:", energy)
                 results['energy'] = energy
             else:
                 print("Error: Surface energy could not be extracted. Please check the format of energy.txt.")
@@ -87,7 +86,6 @@ class SurfaceEnergyBulkSimulation:
                 Lx = float(box_match.group(1))
                 Ly = float(box_match.group(2))
                 area = Lx * Ly
-                print(f"Area calculated successfully: Lx = {Lx}, Ly = {Ly}, Area = {area}")
                 results['area'] = area
             else:
                 print("Error: Lx and Ly values could not be extracted. Please check the format of box.txt.")
@@ -306,7 +304,6 @@ class SurfaceEnergySimulation:
         """
         Process the results of the relaxation simulation.
         """
-        print("Processing simulation results...")
         
         # initialize an empty dictionary to store energies
         results = {}
@@ -375,7 +372,6 @@ class DFTSurfaceEnergyFreeSimulation:
         
         # The third line contains the lattice vectors. We modify the Z component of the third vector.
         lattice_z_vector = lines[4].split()
-        print(lattice_z_vector)
         lattice_z_vector[2] = str(float(lattice_z_vector[2]) + self.z_increase)
         
         # Rejoin the modified vector
@@ -391,7 +387,6 @@ class DFTSurfaceEnergyFreeSimulation:
         """
         Process the results of the relaxation simulation.
         """
-        print("Processing simulation results...")
         
         parser = DFTDataParser(self.simulation_directory)
         energy = parser.get_energy()
@@ -450,7 +445,6 @@ class DFTSurfaceEnergyBulkSimulation:
         """
         Process the results of the relaxation simulation.
         """
-        print("Processing simulation results...")
         
         parser = DFTDataParser(self.simulation_directory)
         energy = parser.get_energy()
@@ -506,7 +500,6 @@ class DFTSurfaceEnergySimulation:
         """
         Process the results of the relaxation simulation.
         """
-        print("Processing simulation results...")
         
         results = {}
         bulk_energy = self.bulk_simulation.process_simulation_results()
