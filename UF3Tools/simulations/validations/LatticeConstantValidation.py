@@ -1,7 +1,7 @@
 from .PotentialValidation import *
     
 class LatticeConstantValidation(PotentialValidation):
-    def __init__(self, potential_file, lammps_model_file, dft_model_file, element_list, **kwargs):
+    def __init__(self, potential_file, lammps_model_file, dft_model_file, element_list, validation_folder_path, **kwargs):
         self.default_kwargs = {
             'min_style': 'cg',
             'uf3_elements': element_list
@@ -9,7 +9,7 @@ class LatticeConstantValidation(PotentialValidation):
         # Update the default keyword arguments with the user-specified arguments
         self.kwargs = self.default_kwargs
         self.kwargs.update(kwargs)
-        super().__init__(potential_file, lammps_model_file, dft_model_file, element_list, use_dft=True)
+        super().__init__(potential_file, lammps_model_file, dft_model_file, element_list,  validation_folder_path, use_dft=True)
     def initialize_simulation_files(self):
         """
         Initialize the simulation files needed for the potential file.
@@ -17,6 +17,7 @@ class LatticeConstantValidation(PotentialValidation):
         # LAMMPS SETUP
         self.lammps_manager.setup_simulation("relaxation", **self.kwargs)
         os.chdir(self.original_directory)
+        print("looking for potential file in: ", self.original_directory)
         self.lammps_manager.set_potential_file(self.potential_file)
         self.lammps_manager.set_model_file(self.lammps_model_file)
         

@@ -211,11 +211,16 @@ class ModelAutomater:
         Generate feature files for all data frames, excluding data types in data_ignore_list.
         """
         os.chdir(self.feature_directory)
+        print("Generating Features for this base data: ")
+        for label, data in self.base_data_frames.items():
+            print(label)
+        print("Starting feature generation...")
         for label, data in self.base_data_frames.items():
             data_type = label.replace('.pkl', '')
             if data_type in self.data_ignore_list:
                 continue
             output_file = f'df_features_{data_type}.h5'
+            print(f"Generating feature for {data_type}")
             featurizer = Featurizer(data, self.chemical_system, self.maps)
             featurizer.featurize_data(self.num_cores, output_file, self.feature_batch_size)
         self.load_existing_features()
@@ -454,6 +459,48 @@ class ModelAutomater:
         trainer.export_model(model_filename + ".json")
         #analyzer = ModelAnalyzer(self.chemical_system, trainer.get_model(), trainer.get_bspline_config(), training_data, structure, structure_feature)
         return self.chemical_system, trainer.get_model(), trainer.get_bspline_config(), features, model_filename
+    def import_model(self, regularizer, model_filename):
+        """
+        Import a pre-trained model from a file.
+
+        Parameters:
+        - model_filename: Path to the model file to import.
+        
+        Returns:
+        - Imported model and its associated chemical system.
+        """
+        # Ensure the model file path is provided
+        if not model_filename:
+            print("Model file path is required.")
+            return
+        features = []
+        for key in self.feature_paths:
+            print(f"key: {key}")
+            #remove .pkl from the key
+            data_type = key.replace('.pkl', '')
+            if(data_type in self.data_ignore_list):
+                continue
+            features.append(self.feature_paths[key])
+            print(f"feature path: {self.feature_paths[key]}")
+        #find the structures feature file
+        for feature in features:
+            if 'structure' in feature:
+                structure_feature = feature
+                break
+        print(f"Importing model from {model_filename}...")
+        
+        # Use the ModelTrainer to import the model
+        trainer = ModelTrainer(self.model_data, self.chemical_system, self.maps, regularizer)
+        trainer.import_model(model_filename)
+        
+        # Retrieve the imported model
+        imported_model = trainer.get_model()
+        
+        # Optionally, you could perform additional checks or setup here
+        print(f"Model imported successfully from {model_filename}.")
+        
+        # Return the chemical system and the imported model
+        return self.chemical_system, imported_model, trainer.get_bspline_config(), features
     def store_validation_data(self, model_filename, validation_data):
         """
         Store the validation data for a given model.
@@ -570,7 +617,9 @@ class ModelAutomater:
         """
         Run a grid search to find the best hyperparameters for the model, including the regularizer values.
         """
-
+        model_filename = datetime.now().strftime("%Y%m%d_%H%M%S")
+        structure_downloader = StructureDownloader(MP_API_KEY)
+        materials = structure_downloader.get_structure_list('AlN')
         for composition in composition_range:
             for energy in energy_range:
                 for force in force_range:
@@ -618,7 +667,7 @@ class ModelAutomater:
                                             self.consolidate_data()
                                             
                                             # Split data into training and testing sets
-                                            training, testing = self.split_data(0.15)
+                                            training, testing = self.split_data(0.10)
                                             
                                             # Train the model with the current parameters and regularizers
                                             chemical_system, trainer_model,bspline_config, features, model_filename = self.train_model(model_filename + ".json", training, testing, regularizer)
@@ -629,9 +678,11 @@ class ModelAutomater:
                                                     break
                                             analyzer = ModelAnalyzer(chemical_system, trainer_model, bspline_config, frame, frame, structure_feature)                                      
                                             # Export model to LAMMPS format
+                                            model_filename = datetime.now().strftime("%Y%m%d_%H%M%S")
+                                            analyzer.set_dft_validation_structures(materials)
+                                            analyzer.set_lammps_validation_structures(materials)
                                             analyzer.export_model_to_lammps("potentials/", model_filename, "ntaormina", "metal", "nk")
                                             analyzer.export_model_to_lammps(os.getcwd(), model_filename, "ntaormina", "metal", "nk")
-                                            
                                             # Validate the model
                                             validation_data = analyzer.validate_potential(model_filename, model_filename, ['Al', 'N'])
                                             print(f"Model {model_filename} validation data: {validation_data}")

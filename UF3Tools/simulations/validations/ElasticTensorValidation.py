@@ -2,7 +2,7 @@ from .PotentialValidation import *
 import re
 
 class ElasticTensorValidation(PotentialValidation):
-    def __init__(self, potential_file, lammps_model_file, dft_model_file, element_list, **kwargs):
+    def __init__(self, potential_file, lammps_model_file, dft_model_file, element_list, validation_folder_path,**kwargs):
         self.default_kwargs = {
             'min_style': 'cg',
             'uf3_elements': element_list
@@ -29,7 +29,7 @@ class ElasticTensorValidation(PotentialValidation):
             "shear_modulus_hill": None,
         }
         self.use_dft = False
-        super().__init__(potential_file, lammps_model_file, dft_model_file, element_list, use_dft=False)
+        super().__init__(potential_file, lammps_model_file, dft_model_file, element_list,  validation_folder_path,use_dft=False)
         
     def initialize_simulation_files(self):
         self.lammps_manager.setup_simulation("elastic_tensor", **self.kwargs)

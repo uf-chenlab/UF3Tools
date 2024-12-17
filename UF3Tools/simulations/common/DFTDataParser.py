@@ -38,16 +38,43 @@ class DFTDataParser:
             'gamma': gamma
         }
         return lattice_parameters
+    def process_surface_energy(self):
+        """
+        Calculate the surface energy by subtracting the final energy of the
+        bulk simulation from the free surface simulation.
+
+        :return: Surface energy in eV
+        """
+        # Define paths to the required subfolders
+        bulk_simulation_path = os.path.join(self.directory, "DFTSurfaceEnergyBulkSimulation")
+        free_simulation_path = os.path.join(self.directory, "DFTSurfaceEnergyFreeSimulation")
+
+        # Check that both required subfolders exist
+        if not os.path.exists(bulk_simulation_path):
+            raise FileNotFoundError(f"Bulk simulation folder not found: {bulk_simulation_path}")
+
+        if not os.path.exists(free_simulation_path):
+            raise FileNotFoundError(f"Free surface simulation folder not found: {free_simulation_path}")
+
+        # Get the energies from the respective OUTCAR files
+        bulk_energy = self.get_energy(os.path.join(bulk_simulation_path, "OUTCAR"))
+        free_energy = self.get_energy(os.path.join(free_simulation_path, "OUTCAR"))
+        print("Bulk Energy: ", bulk_energy)
+        print("Free Energy: ", free_energy)
+        # Calculate the surface energy
+        surface_energy = free_energy - bulk_energy
+        array = [bulk_energy, free_energy, surface_energy]
+        return array
     def get_energy(self, filename=None):
-        """Read the final energy from the OUTCAR file
-        :param filename: Name of the OUTCAR file to read
+        """
+        Read the final energy from the OUTCAR file
+
+        :param filename: Path to the OUTCAR file to read
         :return: Final energy in eV
         """
-        # Use the OUTCAR file by default
-        if filename is None:
-            filename = os.path.join(self.directory, "OUTCAR")
-        else:
-            filename = os.path.join(self.directory, filename)
+        if not os.path.exists(filename):
+            raise FileNotFoundError(f"OUTCAR file not found: {filename}")
+
         outcar = Outcar(filename)
         energy = outcar.final_energy
         return energy

@@ -7,7 +7,7 @@ from ..common.DFTDataParser import DFTDataParser
 import ast
 
 class PotentialValidation:
-    def __init__(self, potential_file, lammps_model_file, dft_model_file, element_list, use_dft=False):
+    def __init__(self, potential_file, lammps_model_file, dft_model_file, element_list, root_directory, use_dft=False):
         #initialize variables
         self.potential_file = potential_file
         self.lammps_model_file = lammps_model_file
@@ -21,13 +21,7 @@ class PotentialValidation:
         self.original_directory = os.getcwd()
         print("printing original directory")
         print(self.original_directory)
-        # Check if the current directory is the validation folder
-        if os.path.basename(self.original_directory) == "validation":
-            os.chdir("..")
-            self.original_directory = os.getcwd()
-
-        self.root_directory = os.path.join(self.original_directory, "validation")
-        self.root_directory = os.getcwd() + "/validation/"
+        self.root_directory = root_directory
         os.makedirs(self.root_directory, exist_ok=True)
         os.chdir(self.root_directory)
         print("printing root directory")
@@ -84,7 +78,9 @@ class PotentialValidation:
             self.dft_result[data_type] = parser.get_lattice_constants()
         elif simulation_type == "surface_energy":
             parser = DFTDataParser(path)
-            self.dft_result[data_type] = parser.get_energy()
+            self.dft_result[data_type] = parser.process_surface_energy()
+            print("surface energy result:")
+            print(self.dft_result[data_type])
         elif simulation_type == "elastic_tensor":
             parser = DFTDataParser(path)
             self.dft_result[data_type] = parser.get_elastic_tensor(path)

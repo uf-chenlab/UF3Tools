@@ -28,6 +28,7 @@ from UF3Tools.simulations import *
 from UF3Tools.simulations.validations.PotentialValidation import PotentialValidation, ValidationData
 from UF3Tools.simulations.validations.LatticeConstantValidation import LatticeConstantValidation
 from UF3Tools.simulations.validations.ElasticTensorValidation import ElasticTensorValidation
+from UF3Tools.simulations.validations.SurfaceEnergyValidation import SurfaceEnergyValidation
 from UF3Tools.common.MPAPIKey import MP_API_KEY
 from UF3Tools.common.StructureDownloader import StructureDownloader
 class RunDataPhaseDiagram:
@@ -521,11 +522,12 @@ class StructureParser:
         return self.data.index.to_series().apply(lambda x: '_'.join(x.split('_')[:2])).unique()
     def transform_data(self, data):
         #self.data['composition'] = self.data.apply(self.create_comp,axis=1)
+        self.append_energy_per_atom()
         pde_entries = self.get_pde_entries(self.data)
         self.cpd = PhaseDiagram(pde_entries)
         self.append_phase_diagram_energy()
         self.append_energy_above_hull()
-        self.append_energy_per_atom()
+        
         element_list = self.get_element_list()
         print(f"Elements in phase diagram: {element_list}")
         for element in element_list:
@@ -874,18 +876,35 @@ class Featurizer:
         """
         # Check if the file already exists
         if os.path.exists(output_filename):
-            print("Feature file already exists: {output_filename}")
+            print(f"Feature file already exists: {output_filename}")
             return
-        
+
+        # Adjust batch size if data size is smaller
+        data_size = len(self.data)
+        if data_size == 0:
+            raise ValueError("No data available for featurization.")
+        adjusted_batch_size = min(batch_size, data_size)
+
         table_template = "features_{}"
         client = ProcessPoolExecutor(max_workers=num_cores)
-        self.representation.batched_to_hdf(output_filename,
-                                           self.data,
-                                           client,
-                                           n_jobs=num_cores,
-                                           batch_size=batch_size,  # It should be 5000 for final
-                                           progress="bar",
-                                           table_template=table_template)
+
+        # Log adjustment
+        if adjusted_batch_size != batch_size:
+            adjusted_batch_size = adjusted_batch_size/2
+            adjusted_batch_size = round(adjusted_batch_size)
+            print(f"Adjusted batch size to {adjusted_batch_size} due to smaller dataset.")
+            
+
+        # Featurization
+        self.representation.batched_to_hdf(
+            output_filename,
+            self.data,
+            client,
+            n_jobs=num_cores,
+            batch_size=adjusted_batch_size,
+            progress="bar",
+            table_template=table_template
+        )
         
 class ModelTrainer:
     def __init__(self, data, chemical_system, maps, regularizer):
@@ -1114,12 +1133,12 @@ class ModelAnalyzer:
         :param lammps_validation_structures: List of LAMMPS validation structures.
         """
         self.lammps_validation_structures = lammps_validation_structures
-    def analyze_model(self, r_cut = 10.0, bins = 0.01, training = False):
+    def analyze_model(self, data_coordinator, r_cut = 10.0, bins = 0.01, training = False):
         """
         Analyze the model.
         """
         self.analyzer = analyze.DataAnalyzer(self.chemical_system, r_cut, bins)
-        self.atoms_key = io.DataCoordinator().atoms_key
+        self.atoms_key = data_coordinator.atoms_key
         histogram_slice = np.random.choice(np.arange(len(self.training_data)),
                                    min(1000, len(self.training_data)),
                                    replace=False)
@@ -1298,19 +1317,29 @@ class ModelAnalyzer:
             data = ValidationData(potential_version, potential_file, structure_id)
 
             # Lattice Constant Validation
-            lattice_constant = LatticeConstantValidation(potential_file, lammps_file, dft_file, element_list_str)
+            print("lattice constant validation")
+            lattice_constant = LatticeConstantValidation(potential_file, lammps_file, dft_file, element_list_str,validation_folder_path)
             dft_lattice_path = os.path.join(validation_folder_path, "dft/simulations/RelaxationSimulation/")
             lattice_constant.retrieve_dft_result("lattice_constant", "lattice_constant", dft_lattice_path)
             lattice_percent_error = lattice_constant.start_validation(overwrite=True, local=False)
             data.add_validation("lattice_constant", lattice_percent_error)
+            os.chdir(current_directory)
 
             # Elastic Tensor Validation
-            tensor = ElasticTensorValidation(potential_file, lammps_file, dft_file, element_list_str)
-            dft_tensor_path = os.path.join(validation_folder_path, "dft/simulations/ElasticTensor/results.txt")
-            tensor.retrieve_dft_result("elastic_tensor", "elastic_tensor", dft_tensor_path)
-            tensor_percent_error = tensor.start_validation(overwrite=True, local=False)
-            data.add_validation("elastic_tensor", tensor_percent_error)
-
+            # tensor = ElasticTensorValidation(potential_file, lammps_file, dft_file, element_list_str,validation_folder_path)
+            # dft_tensor_path = os.path.join(validation_folder_path, "dft/simulations/ElasticTensor/results.txt")
+            # tensor.retrieve_dft_result("elastic_tensor", "elastic_tensor", dft_tensor_path)
+            # tensor_percent_error = tensor.start_validation(overwrite=True, local=False)
+            # data.add_validation("elastic_tensor", tensor_percent_error)
+            os.chdir(current_directory)
+            # Surface Energy Validation 
+            print("surface energy validation")
+            surface_energy = SurfaceEnergyValidation(potential_file, lammps_file, dft_file, element_list_str,validation_folder_path)
+            dft_surface_energy_path = os.path.join(validation_folder_path, "dft/simulations/SurfaceEnergySimulation/")
+            surface_energy.retrieve_dft_result("surface_energy", "surface_energy", dft_surface_energy_path)
+            surface_energy_percent_error = surface_energy.start_validation(overwrite=True, local=False)
+            data.add_validation("surface_energy", surface_energy_percent_error)
+            os.chdir(current_directory)
             # Append the validation data
             datas.append(data)
 

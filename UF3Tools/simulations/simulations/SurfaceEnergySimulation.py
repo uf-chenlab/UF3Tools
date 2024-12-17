@@ -158,10 +158,12 @@ class SurfaceEnergyFreeSimulation:
             energy_pattern = r'pe:\s*([-.\d]+)'  # Modified pattern to handle negative numbers
 
             energy_match = re.search(energy_pattern, energy_text)
+            print("energy path: ", energy_file_path)
+            print("energy  text: ", energy_text)
 
             if energy_match:
                 energy = float(energy_match.group(1))
-                print("Surface energy extracted successfully:", energy)
+                print("LAMMPS Surface energy extracted successfully:", energy)
                 results['energy'] = energy
             else:
                 print("Error: Surface energy could not be extracted. Please check the format of energy.txt.")
