@@ -184,7 +184,8 @@ class ModelAutomater:
 
     def get_data(self):
         return self.data_frames
-    
+    def get_all_filtered_data(self):
+        return self.filtered_data_frames
     def get_data(self, data_type):
         return self.filtered_data_frames[data_type]
     
@@ -280,6 +281,10 @@ class ModelAutomater:
         """
         filtered_filename = f'{data_type}_filtered.pkl'
         filtered_file_path = os.path.join(self.filter_directory,  filtered_filename)
+        #check if on ignore list
+        if data_type in self.data_ignore_list:
+            print(f"Data type {data_type} is on the ignore list.")
+            return
         # Load the appropriate data
         if check_existing:
             #check if the filtered file is already in the filtered_data_frames
@@ -296,11 +301,6 @@ class ModelAutomater:
                 if not self.check_structure_data(data):
                     data = self.repair_structure_data(data)
                     self.replace_existing_data(data_filename, data)
-                    
-
-            
-        
-        
                 
         # Create a DataFilter instance
         data_filter = DataFilter(data)

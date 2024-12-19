@@ -520,9 +520,10 @@ class StructureParser:
         :return: List of unique indices.
         """
         return self.data.index.to_series().apply(lambda x: '_'.join(x.split('_')[:2])).unique()
-    def transform_data(self, data):
+    def transform_data(self, data, epa_filter = [-10, 999999]):
         #self.data['composition'] = self.data.apply(self.create_comp,axis=1)
         self.append_energy_per_atom()
+        self.filter_epa(epa_filter)
         pde_entries = self.get_pde_entries(self.data)
         self.cpd = PhaseDiagram(pde_entries)
         self.append_phase_diagram_energy()
@@ -534,7 +535,8 @@ class StructureParser:
             self.append_element_fraction(element)
             
         return self.data
-
+    def filter_epa(self, epa_filter):
+        self.data = self.data[(self.data['energy_per_atom'] >= epa_filter[0]) & (self.data['energy_per_atom'] <= epa_filter[1])]
     def get_data(self):
         """
         Get the DataFrame containing the parsed data.
@@ -1325,12 +1327,13 @@ class ModelAnalyzer:
             data.add_validation("lattice_constant", lattice_percent_error)
             os.chdir(current_directory)
 
-            # Elastic Tensor Validation
-            # tensor = ElasticTensorValidation(potential_file, lammps_file, dft_file, element_list_str,validation_folder_path)
-            # dft_tensor_path = os.path.join(validation_folder_path, "dft/simulations/ElasticTensor/results.txt")
-            # tensor.retrieve_dft_result("elastic_tensor", "elastic_tensor", dft_tensor_path)
-            # tensor_percent_error = tensor.start_validation(overwrite=True, local=False)
-            # data.add_validation("elastic_tensor", tensor_percent_error)
+            #Elastic Tensor Validation
+            print("Elastic Tensor Validation")
+            tensor = ElasticTensorValidation(potential_file, lammps_file, dft_file, element_list_str,validation_folder_path)
+            dft_tensor_path = os.path.join(validation_folder_path, "dft/simulations/ElasticTensor/results.txt")
+            tensor.retrieve_dft_result("elastic_tensor", "elastic_tensor", dft_tensor_path)
+            tensor_percent_error = tensor.start_validation(overwrite=True, local=False)
+            data.add_validation("elastic_tensor", tensor_percent_error)
             os.chdir(current_directory)
             # Surface Energy Validation 
             print("surface energy validation")
