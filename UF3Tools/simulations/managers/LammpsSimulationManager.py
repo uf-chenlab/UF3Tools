@@ -78,3 +78,8 @@ class LammpsSimulationManager(SimulationManager):
         self.potential_file = potential_file
         self.register_simulation_file(potential_file)
         self.simulation.set_potential_file(potential_file)
+        
+    def retrieve_results(self):
+        os.chdir(self.simulation_dir)
+        results = self.simulation.process_simulation_results()
+        return results

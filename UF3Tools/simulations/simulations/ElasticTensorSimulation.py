@@ -49,7 +49,6 @@ class ElasticTensorSimulation:
         return results_exists
     
     def process_simulation_results(self):
-        
         #initialize 
         lammps_data = {
             "elastic_tensor": None,

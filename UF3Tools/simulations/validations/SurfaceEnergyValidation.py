@@ -33,23 +33,25 @@ class SurfaceEnergyValidation(PotentialValidation):
         """
         Start the validation process by running the LAMMPS and DFT simulations.
         """
-        lammps_results = self.lammps_manager.start_simulation(overwrite=overwrite, local=local)
+        if(self.lammps_results == []):
+            self.lammps_results = self.lammps_manager.start_simulation(overwrite=overwrite, local=local)
+
         percent_error = {}
-        if isinstance(lammps_results, list):
-            lammps_results = lammps_results[0]
-        area = (lammps_results['bulk_area'] + lammps_results['free_area'])/2
+        if isinstance(self.lammps_results, list):
+            self.lammps_results = self.lammps_results[0]
+        area = (self.lammps_results['bulk_area'] + self.lammps_results['free_area'])/2
         print("lammps results raw")
-        print(lammps_results)
-        surface_energy = (lammps_results['free_energy']/(2*lammps_results['free_area']) - lammps_results['bulk_energy']/(2*lammps_results['bulk_area']))
-        lammps_results.pop('bulk_area')
-        lammps_results.pop('free_area')
-        lammps_results['area'] = area
-        lammps_results['surface_energy'] = surface_energy  
-        print(lammps_results)
+        print(self.lammps_results)
+        surface_energy = (self.lammps_results['free_energy']/(2*self.lammps_results['free_area']) - self.lammps_results['bulk_energy']/(2*self.lammps_results['bulk_area']))
+        self.lammps_results.pop('bulk_area')
+        self.lammps_results.pop('free_area')
+        self.lammps_results['area'] = area
+        self.lammps_results['surface_energy'] = surface_energy  
+        print(self.lammps_results)
         dft_results = self.dft_result
         if isinstance(dft_results, list):
             dft_results = dft_results[0]
-        dft_results['area'] = lammps_results['area']
+        dft_results['area'] = self.lammps_results['area']
         
 
         if self.use_dft and self.dft_result != {}:
@@ -67,9 +69,9 @@ class SurfaceEnergyValidation(PotentialValidation):
         
 
         try:
-            print(f"lammps {lammps_results['bulk_energy']} ; area: {2 * lammps_results['area']} ; dft {dft_results['bulk']}")
+            #print(f"lammps {lammps_results['bulk_energy']} ; area: {2 * lammps_results['area']} ; dft {dft_results['bulk']}")
             percent_error['bulk_energy'] = abs(
-                (lammps_results['bulk_energy'] /(2* lammps_results['area'])) - 
+                (self.lammps_results['bulk_energy'] /(2* self.lammps_results['area'])) - 
                 (dft_results['bulk'])
             ) / abs((dft_results['bulk']) )* 100
         except ZeroDivisionError as e:
@@ -78,7 +80,7 @@ class SurfaceEnergyValidation(PotentialValidation):
 
         try:
             percent_error['free_energy'] = abs(
-                (lammps_results['free_energy'] /( lammps_results['area']*2)) - 
+                (self.lammps_results['free_energy'] /( self.lammps_results['area']*2)) - 
                 (dft_results['free'])
             ) / abs((dft_results['free']) )* 100
         except ZeroDivisionError as e:
@@ -88,7 +90,7 @@ class SurfaceEnergyValidation(PotentialValidation):
         # Calculate percent error for surface energy
         try:
             percent_error['surface_energy'] = abs(
-                lammps_results['surface_energy'] - dft_results['surface_energy']
+                self.lammps_results['surface_energy'] - dft_results['surface_energy']
             ) / abs(dft_results['surface_energy'] )* 100
         except ZeroDivisionError as e:
             percent_error['surface_energy'] = None

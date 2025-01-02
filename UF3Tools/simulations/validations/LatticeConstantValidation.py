@@ -17,7 +17,6 @@ class LatticeConstantValidation(PotentialValidation):
         # LAMMPS SETUP
         self.lammps_manager.setup_simulation("relaxation", **self.kwargs)
         os.chdir(self.original_directory)
-        print("looking for potential file in: ", self.original_directory)
         self.lammps_manager.set_potential_file(self.potential_file)
         self.lammps_manager.set_model_file(self.lammps_model_file)
         

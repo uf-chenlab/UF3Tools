@@ -1151,9 +1151,18 @@ class ModelAnalyzer:
             self.analyze_2b(element_list, analysis)
         for element_list in self.chemical_system.interactions_map[3]:
             self.analyze_3b(element_list, self.model)
+        self.generate_density_plot(analysis)
         self.test_model_prediction(training = training)
         self.generate_parity_plots()
-        
+    def generate_density_plot(self, analysis):
+        canvases = plotting.plot_pair_distributions(analysis, show_cutoffs=False)
+        for fig, ax in canvases:
+            fig.set_figwidth(6)
+            fig.set_figheight(6)
+            fig.set_dpi(120)
+            fig.tight_layout()
+            ax.set_ylim(0,5) # Set the y-axis limit to 5 
+            ax.set_xlim(0,5) # Set the x-axis limit to 5 
     def analyze_2b(self, element_list, analysis):
         """
         Analyze the 2-body interactions.
@@ -1321,6 +1330,7 @@ class ModelAnalyzer:
             # Lattice Constant Validation
             print("lattice constant validation")
             lattice_constant = LatticeConstantValidation(potential_file, lammps_file, dft_file, element_list_str,validation_folder_path)
+            lattice_constant.initialize_simulation_files()
             dft_lattice_path = os.path.join(validation_folder_path, "dft/simulations/RelaxationSimulation/")
             lattice_constant.retrieve_dft_result("lattice_constant", "lattice_constant", dft_lattice_path)
             lattice_percent_error = lattice_constant.start_validation(overwrite=True, local=False)
@@ -1330,6 +1340,7 @@ class ModelAnalyzer:
             #Elastic Tensor Validation
             print("Elastic Tensor Validation")
             tensor = ElasticTensorValidation(potential_file, lammps_file, dft_file, element_list_str,validation_folder_path)
+            tensor.initialize_simulation_files()
             dft_tensor_path = os.path.join(validation_folder_path, "dft/simulations/ElasticTensor/results.txt")
             tensor.retrieve_dft_result("elastic_tensor", "elastic_tensor", dft_tensor_path)
             tensor_percent_error = tensor.start_validation(overwrite=True, local=False)
@@ -1338,6 +1349,7 @@ class ModelAnalyzer:
             # Surface Energy Validation 
             print("surface energy validation")
             surface_energy = SurfaceEnergyValidation(potential_file, lammps_file, dft_file, element_list_str,validation_folder_path)
+            surface_energy.initialize_simulation_files()
             dft_surface_energy_path = os.path.join(validation_folder_path, "dft/simulations/SurfaceEnergySimulation/")
             surface_energy.retrieve_dft_result("surface_energy", "surface_energy", dft_surface_energy_path)
             surface_energy_percent_error = surface_energy.start_validation(overwrite=True, local=False)
