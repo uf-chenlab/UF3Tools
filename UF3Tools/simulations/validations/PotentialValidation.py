@@ -80,11 +80,12 @@ class PotentialValidation:
         elif simulation_type == "surface_energy":
             parser = DFTDataParser(path)
             self.dft_result[data_type] = parser.process_surface_energy()
-            print("surface energy result:")
-            print(self.dft_result[data_type])
         elif simulation_type == "elastic_tensor":
             parser = DFTDataParser(path)
             self.dft_result[data_type] = parser.get_elastic_tensor(path)
+        elif simulation_type == "cohesive_energy":
+            parser = DFTDataParser(path)
+            self.dft_result[data_type] = parser.get_cohesive_energy(path)
         else:
             raise ValueError(f"Simulation type '{simulation_type}' is not supported.")
         self.has_dft_data = True

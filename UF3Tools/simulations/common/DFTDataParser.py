@@ -122,6 +122,23 @@ class DFTDataParser:
                     dft_data["shear_modulus_hill"] = float(match.group(3))
 
         return dft_data
+    def get_cohesive_energy(self, dft_path):
+        dft_data = {
+            'cohesive_energy': None,
+            'free_atom_energy': None,
+            'bulk_energy': None
+        }
+        with open(dft_path, 'r') as file:
+            lines = file.readlines()
+            for line in lines:
+                if "ecoh" in line:
+                    # Replace special minus sign with standard minus sign
+                    dft_data["cohesive_energy"] = float(line.split()[1].replace("−", "-"))
+                elif "efree" in line:
+                    dft_data["free_atom_energy"] = float(line.split()[1].replace("−", "-"))  
+                elif "ebulk" in line:
+                    dft_data["bulk_energy"] = float(line.split()[1].replace("−", "-"))
+        return dft_data
     def poscarToLAMMPS(self, poscar, outputFilename):
         """
         Converts a VASP POSCAR/CONTCAR file to a LAMMPS data file.

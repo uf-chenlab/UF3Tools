@@ -6,6 +6,7 @@ from ..simulations.RelaxationSimulation import RelaxationSimulation
 from ..simulations.LangevinSimulation import LangevinSimulation
 from ..simulations.SurfaceEnergySimulation import SurfaceEnergySimulation
 from ..simulations.ElasticTensorSimulation import ElasticTensorSimulation
+from ..simulations.CohesiveEnergySimulation import CohesiveEnergySimulation
 
 class LammpsSimulationManager(SimulationManager):
     def __init__(self):
@@ -30,6 +31,9 @@ class LammpsSimulationManager(SimulationManager):
         elif simulation_type.lower() == "elastic_tensor":
             template_directory = os.path.join(self.parent_directory, "templates/elastic_tensor/")
             self.simulation = ElasticTensorSimulation(self.simulation_dir, template_directory, **kwargs)
+        elif simulation_type.lower() == "cohesive_energy":
+            template_directory = os.path.join(self.parent_directory, "templates/cohesive_energy/")
+            self.simulation = CohesiveEnergySimulation(self.simulation_dir, template_directory, **kwargs)
         else:
             raise ValueError(f"Simulation type '{simulation_type}' is not supported.")
 

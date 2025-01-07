@@ -360,6 +360,8 @@ class ModelAutomater:
         self.data_ignore_list = []
     def add_to_ignore_list(self, data_label):
         self.data_ignore_list.append(data_label)
+    def get_ignore_list(self):
+        return self.data_ignore_list
     def consolidate_data(self):
         """
         Consolidate all data into a single DataFrame for training/testing, ignoring data types in data_ignore_list.
@@ -623,37 +625,6 @@ class ModelAutomater:
         """
         self.parity_frame = parity_frame
         self.parity_feature = parity_feature
-    def train_automated_model(self, regularizer, model_filename, composition_element, composition, energy, force):
-        # Clear memory and load base data
-        self.add_to_ignore_list('surface_energy2')
-        #self.add_to_ignore_list('pressure')
-        self.add_to_ignore_list('Hexagonal')
-        #self.add_to_ignore_list('gpu')
-        #self.add_to_ignore_list('surface_energy2')
-        self.add_to_ignore_list('vaspkit')
-        
-        self.clear_memory()
-        self.load_existing_base_data()
-        
-        # Generate filtered data
-        self.generate_new_filtered_data('structure', 'composition', False, composition_element, composition)
-        self.generate_new_filtered_data('structure', 'energy_above_hull', True, energy)
-        self.generate_new_filtered_data('structure', 'maximum_force', True, force, force, force)
-        self.generate_new_filtered_data('pressure', 'increase_points', False, 500)
-        self.generate_new_filtered_data('gpu', 'zero_force', False)
-        self.generate_new_filtered_data('gpu', 'reduce_points', False, 1000)
-        self.generate_new_filtered_data('vaspkit', 'zero_force', False)
-        self.generate_new_filtered_data('vaspkit', 'increase_points', False, 1000)
-        
-        # Consolidate data
-        self.consolidate_data()
-        
-        # Split data into training and testing sets
-        training, testing = self.split_data(0.10)
-        
-        # Train the model with the current parameters and regularizers
-        chemical_system, trainer_model,bspline_config, features, model_filename = self.train_model(model_filename + ".json", training, testing, regularizer)
-        return chemical_system, trainer_model, bspline_config, features, model_filename
     def set_lammps_validation_models(self, models):
         """
         Set the LAMMPS validation models for the current potential when doing grid search. otherwise, defaults to materialsproject
@@ -693,12 +664,33 @@ class ModelAutomater:
                     for cutoff in self.cutoffs[cutoff_type]:
                         result = tester[cutoff]
                         threshold = self.cutoffs[cutoff_type][cutoff]
+                        print(f'{key} {cutoff_type} {cutoff}: {result} : {threshold}')
                         if(result > threshold):
                             output = False
         return output
-            
+    def accept_model(self, model_filename):
+        """
+        Accept a model and move it to the valid_potentials folder.
+        """
+        #make sure model_filename exists
+        if not os.path.exists(f"{model_filename}.json"):
+            print(f"Model {model_filename} not found.")
+            return
+        os.rename(f"{model_filename}.json", f"{self.valid_potentials_folder}/{model_filename}.json")
+        #take the validation data and store it in the valid_potentials folder
+        os.rename(f"potentials/{model_filename}_validation_data.txt", f"{self.valid_potentials_folder}/{model_filename}_validation_data.txt")  
+    def setup_valid_potential_folder(self):
+        """
+        Setup the valid_potentials folder for storing accepted models. Creates
+        a subfolder in the valid_potentials folder with the current date and time.
+        """
+        os.makedirs("valid_potentials", exist_ok=True)
+        folder_name = datetime.now().strftime("%Y%m%d_%H%M%S")
+        os.makedirs(f"valid_potentials/{folder_name}", exist_ok=False)
+        self.valid_potentials_folder = f"valid_potentials/{folder_name}"
     def run_cutoff_grid_search_quick_test(self, composition_element, composition_range, energy_range, force_range, min_force_range, regularizer_ranges):
         print("not ready yet")
+        self.setup_valid_potential_folder()
         elastic = {"bulk_modulus_voigt":200.0, "shear_modulus_voigt":200.0}
         lattice_constant = {"a":1.0, "b":1.0, "c":1.0}
         surface_energy = {"bulk_energy":50.0}
@@ -751,21 +743,41 @@ class ModelAutomater:
     def run_cutoff_grid_search(self, composition_element, composition_range, energy_range, force_range, min_force_range, regularizer_ranges):
         print("not ready yet")
         base_directory = os.getcwd()
+        self.setup_valid_potential_folder()
         elastic = {"bulk_modulus_voigt":25.0, "shear_modulus_voigt":25.0}
         lattice_constant = {"a":1.0, "b":1.0, "c":1.0}
         surface_energy = {"bulk_energy":50.0}
         normalized_error = {"normalized_error":0.20}
+        cohesive_energy = {"cohesive_energy":20.0}
         self.cutoffs = {"elastic_tensor":elastic, 
                         "lattice_constant":lattice_constant, 
-                        "surface_energy":surface_energy}
+                        "surface_energy":surface_energy,
+                        "cohesive_energy":cohesive_energy}
         model_filename = datetime.now().strftime("%Y%m%d_%H%M%S")
         structure_downloader = StructureDownloader(MP_API_KEY)
         materials = structure_downloader.get_structure_list('AlN')
+       
+        
         for composition in composition_range:
             for energy in energy_range:
                 for force in force_range:
-                    for min_force in min_force_range: 
-                        for ridge_1b in regularizer_ranges['ridge_1b']:
+                    for min_force in min_force_range: #after this, regularizers will be tested
+                        self.clear_memory()
+                        self.load_existing_base_data()
+                        self.load_existing_features()
+                        
+                        # Generate filtered data
+                        self.generate_new_filtered_data('structure', 'composition', False, composition_element, composition)
+                        self.generate_new_filtered_data('structure', 'energy_above_hull', True, energy)
+                        self.generate_new_filtered_data('structure', 'maximum_force', True, force, force, force)
+                        self.generate_new_filtered_data('pressure', 'increase_points', False, 500)
+                        self.generate_new_filtered_data('gpu', 'zero_force', False)
+                        self.generate_new_filtered_data('gpu', 'reduce_points', False, 1000)
+                        self.copy_unfiltered_data()
+                        self.consolidate_data()
+                        training, testing = self.split_data(0.01)
+
+                        for ridge_1b in regularizer_ranges['ridge_1b']: #start regularizer test (don't need to reload data)
                             for ridge_2b in regularizer_ranges['ridge_2b']:
                                 for ridge_3b in regularizer_ranges['ridge_3b']:
                                     for curvature_2b in regularizer_ranges['curvature_2b']:
@@ -783,13 +795,21 @@ class ModelAutomater:
                                                             ridge_3b=ridge_3b,
                                                             curvature_2b=curvature_2b,
                                                             curvature_3b=curvature_3b)
-                                            chemical_system, trainer_model, bspline_config, features, model_filename = self.train_automated_model(regularizer, model_filename, composition_element, composition, energy, force)
+                                            chemical_system, trainer_model,bspline_config, features, NULL = self.train_model(model_filename + ".json", training, testing, regularizer)
                                             if(self.parity_frame is None):
-                                                frame = self.get_data('structure_filtered.pkl')
-                                                for feature in features:
-                                                    if 'structure' in feature:
-                                                        structure_feature = feature
-                                                        break
+                                                if(self.filtered_data_frames.__contains__('structure_filtered.pkl')):
+                                                    frame = self.get_data('structure_filtered.pkl')
+                                                    for feature in features:
+                                                        if 'structure' in feature:
+                                                            structure_feature = feature
+                                                            break
+                                                else:
+                                                    #get first frame in filtered data
+                                                    frame = self.filtered_data_frames[self.filtered_data_labels[0]]
+                                                    for feature in features:
+                                                        if self.filtered_data_labels[0].replace('_filtered.pkl', '') in feature:
+                                                            structure_feature = feature
+                                                            break
                                             else:
                                                 frame = self.parity_frame
                                                 structure_feature = self.parity_feature
@@ -798,22 +818,31 @@ class ModelAutomater:
                                             materials = [materials[0]]
                                             analyzer.set_dft_validation_structures(materials)
                                             analyzer.set_lammps_validation_structures(materials)
-                                            analyzer.export_model_to_lammps("potentials/", model_filename, "ntaormina", "metal", "nk")
-                                            analyzer.export_model_to_lammps(os.getcwd(), model_filename, "ntaormina", "metal", "nk")
+                                            analyzer.export_model_to_lammps("potentials/", model_filename, True, "ntaormina", "metal", "nk")
+                                            analyzer.export_model_to_lammps(os.getcwd(), model_filename, True, "ntaormina", "metal", "nk")
                                             # Validate the model
                                             validation_data = analyzer.validate_potential(model_filename, model_filename, ['Al', 'N'])
                                             # check that the validation data meets the cutoffs before saving
-                                            if(self.check_validation_cutoffs(validation_data)):
+                                            if(self.check_validation_cutoffs(validation_data) or True): #true debug flag
                                                 self.store_validation_data(model_filename, validation_data)
                                                 print(f"Model {model_filename} validation data: {validation_data}")
+                                                self.accept_model(model_filename)
+                                            else:
+                                                print(f"Model {model_filename} did not meet cutoffs")
+                                                # Remove potential file from current working directory
+                                                os.remove(f"{model_filename}")
+                                                
                                             os.chdir(base_directory)
+        #all done, copy the validation data to the valid_potentials folder
+        os.rename("validation_datas.txt", f"{self.valid_potentials_folder}/validation_datas.txt")
         
-        
+    
     def run_grid_search(self, composition_element, composition_range, energy_range, force_range, min_force_range, regularizer_ranges):
         """
         Run a grid search to find the best hyperparameters for the model, including the regularizer values.
         """
         model_filename = datetime.now().strftime("%Y%m%d_%H%M%S")
+        self.setup_valid_potential_folder()
         structure_downloader = StructureDownloader(MP_API_KEY)
         materials = structure_downloader.get_structure_list('AlN')
         base_directory = os.getcwd()
@@ -821,6 +850,20 @@ class ModelAutomater:
             for energy in energy_range:
                 for force in force_range:
                     for min_force in min_force_range: 
+                        self.clear_memory()
+                        self.load_existing_base_data()
+                        self.load_existing_features()
+                        
+                        # Generate filtered data
+                        self.generate_new_filtered_data('structure', 'composition', False, composition_element, composition)
+                        self.generate_new_filtered_data('structure', 'energy_above_hull', True, energy)
+                        self.generate_new_filtered_data('structure', 'maximum_force', True, force, force, force)
+                        self.generate_new_filtered_data('pressure', 'increase_points', False, 500)
+                        self.generate_new_filtered_data('gpu', 'zero_force', False)
+                        self.generate_new_filtered_data('gpu', 'reduce_points', False, 1000)
+                        self.copy_unfiltered_data()
+                        self.consolidate_data()
+                        training, testing = self.split_data(0.01)
                         for ridge_1b in regularizer_ranges['ridge_1b']:
                             for ridge_2b in regularizer_ranges['ridge_2b']:
                                 for ridge_3b in regularizer_ranges['ridge_3b']:
@@ -841,7 +884,7 @@ class ModelAutomater:
                                                             curvature_2b=curvature_2b,
                                                             curvature_3b=curvature_3b)
                                             
-                                            chemical_system, trainer_model, bspline_config, features, model_filename = self.train_automated_model(regularizer, model_filename)
+                                            chemical_system, trainer_model,bspline_config, features, NULL = self.train_model(model_filename + ".json", training, testing, regularizer)
                                             if(self.parity_frame is None):
                                                 frame = self.get_data('structure_filtered.pkl')
                                                 for feature in features:

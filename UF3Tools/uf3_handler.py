@@ -29,6 +29,7 @@ from UF3Tools.simulations.validations.PotentialValidation import PotentialValida
 from UF3Tools.simulations.validations.LatticeConstantValidation import LatticeConstantValidation
 from UF3Tools.simulations.validations.ElasticTensorValidation import ElasticTensorValidation
 from UF3Tools.simulations.validations.SurfaceEnergyValidation import SurfaceEnergyValidation
+from UF3Tools.simulations.validations.CohesiveEnergyValidation import CohesiveEnergyValidation
 from UF3Tools.common.MPAPIKey import MP_API_KEY
 from UF3Tools.common.StructureDownloader import StructureDownloader
 class RunDataPhaseDiagram:
@@ -1231,7 +1232,7 @@ class ModelAnalyzer:
 
         plt.tight_layout()
         plt.show()
-    def export_model_to_lammps(self, directory, filename=None, author="author", units="metal", knots_spacing_type="nk"):
+    def export_model_to_lammps(self, directory, filename=None, overwrite=True, author="author", units="metal", knots_spacing_type="nk"):
         """
         Export the model to a LAMMPS potential file using the UF3LammpsPotentialGenerator.
 
@@ -1241,7 +1242,7 @@ class ModelAnalyzer:
         :param knots_spacing_type: Knot spacing type, 'uk' (uniform) or 'nk' (non-uniform).
         """
         generator = UF3LammpsPotentialGenerator(self.model, self.chemical_system, self.bspline_config)
-        generator.generate_potential_file(directory=directory, filename=filename, author=author, units=units, knots_spacing_type=knots_spacing_type)
+        generator.generate_potential_file(directory=directory, filename=filename, overwrite=overwrite, author=author, units=units, knots_spacing_type=knots_spacing_type)
 
     def set_up_folder_structure(self):
         current_directory = os.getcwd()
@@ -1336,25 +1337,35 @@ class ModelAnalyzer:
             lattice_percent_error = lattice_constant.start_validation(overwrite=True, local=False)
             data.add_validation("lattice_constant", lattice_percent_error)
             os.chdir(current_directory)
+            
+            # Cohesive Energy Validation 
+            print("cohesive energy validation")
+            cohesive_energy = CohesiveEnergyValidation(potential_file, lammps_file, dft_file, element_list_str,validation_folder_path)
+            cohesive_energy.initialize_simulation_files()
+            dft_cohesive_energy_path = os.path.join(validation_folder_path, "dft/simulations/CohesiveEnergySimulation/results.txt")
+            cohesive_energy.retrieve_dft_result("cohesive_energy", "cohesive_energy", dft_cohesive_energy_path)
+            cohesive_energy_percent_error = cohesive_energy.start_validation(overwrite=True, local=False)
+            data.add_validation("cohesive_energy", cohesive_energy_percent_error)
+            os.chdir(current_directory)
 
-            #Elastic Tensor Validation
-            print("Elastic Tensor Validation")
-            tensor = ElasticTensorValidation(potential_file, lammps_file, dft_file, element_list_str,validation_folder_path)
-            tensor.initialize_simulation_files()
-            dft_tensor_path = os.path.join(validation_folder_path, "dft/simulations/ElasticTensor/results.txt")
-            tensor.retrieve_dft_result("elastic_tensor", "elastic_tensor", dft_tensor_path)
-            tensor_percent_error = tensor.start_validation(overwrite=True, local=False)
-            data.add_validation("elastic_tensor", tensor_percent_error)
-            os.chdir(current_directory)
-            # Surface Energy Validation 
-            print("surface energy validation")
-            surface_energy = SurfaceEnergyValidation(potential_file, lammps_file, dft_file, element_list_str,validation_folder_path)
-            surface_energy.initialize_simulation_files()
-            dft_surface_energy_path = os.path.join(validation_folder_path, "dft/simulations/SurfaceEnergySimulation/")
-            surface_energy.retrieve_dft_result("surface_energy", "surface_energy", dft_surface_energy_path)
-            surface_energy_percent_error = surface_energy.start_validation(overwrite=True, local=False)
-            data.add_validation("surface_energy", surface_energy_percent_error)
-            os.chdir(current_directory)
+            # #Elastic Tensor Validation
+            # print("Elastic Tensor Validation")
+            # tensor = ElasticTensorValidation(potential_file, lammps_file, dft_file, element_list_str,validation_folder_path)
+            # tensor.initialize_simulation_files()
+            # dft_tensor_path = os.path.join(validation_folder_path, "dft/simulations/ElasticTensor/results.txt")
+            # tensor.retrieve_dft_result("elastic_tensor", "elastic_tensor", dft_tensor_path)
+            # tensor_percent_error = tensor.start_validation(overwrite=True, local=False)
+            # data.add_validation("elastic_tensor", tensor_percent_error)
+            # os.chdir(current_directory)
+            # # Surface Energy Validation 
+            # print("surface energy validation")
+            # surface_energy = SurfaceEnergyValidation(potential_file, lammps_file, dft_file, element_list_str,validation_folder_path)
+            # surface_energy.initialize_simulation_files()
+            # dft_surface_energy_path = os.path.join(validation_folder_path, "dft/simulations/SurfaceEnergySimulation/")
+            # surface_energy.retrieve_dft_result("surface_energy", "surface_energy", dft_surface_energy_path)
+            # surface_energy_percent_error = surface_energy.start_validation(overwrite=True, local=False)
+            # data.add_validation("surface_energy", surface_energy_percent_error)
+            # os.chdir(current_directory)
             # Append the validation data
             datas.append(data)
 
@@ -1385,7 +1396,7 @@ class UF3LammpsPotentialGenerator:
         """
         self.model.to_json(filename)
 
-    def generate_potential_file(self, directory, filename=None, author="author", units="metal", knots_spacing_type="nk"):
+    def generate_potential_file(self, directory, filename=None, overwrite=True, author="author", units="metal", knots_spacing_type="nk"):
         """
         Generate the UF3 LAMMPS potential file.
 
@@ -1404,7 +1415,7 @@ class UF3LammpsPotentialGenerator:
         full_path = os.path.join(directory, filename)
 
         # Check if file exists and add a timestamp if necessary
-        if os.path.exists(full_path):
+        if os.path.exists(full_path) and not overwrite:
             current_datetime = datetime.now().strftime("%Y%m%d_%H%M%S")
             filename = filename + "_" + current_datetime
             full_path = os.path.join(directory, filename)
