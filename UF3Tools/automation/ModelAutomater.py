@@ -13,6 +13,7 @@ class ModelAutomater:
             'minimum_force': 'filter_force_minimum',
             'reduce_points': 'filter_reduce_data_points',
             'increase_points': 'filter_increase_data_points',
+            'remove_by_id': 'filter_out_indices',
             'none': 'get_data'
             # Add new filters here as needed
         }
@@ -44,9 +45,6 @@ class ModelAutomater:
         self.initialize_directories()
         self.banned_name_list = ['cubic', 'hexagonal', 'fcc', 'bcc', 'hcp', 'diamond', 'graphite', 'amorphous', 'liquid', 'surface_energy',]
         
-        # Load existing data
-        self.load_existing_base_data()
-        self.load_existing_features()
         
         # Validation Parameters
         self.validation_lammps_models = []
@@ -97,6 +95,7 @@ class ModelAutomater:
         data_files = {}
         local_data_labels = []
         for file in os.listdir(directory):
+            print(f"load filtered data file debug: {file}")
             if file.endswith('.pkl'):
                 # Extract the data type from the file name and check against the ignore list
                 data_type = file.replace('.pkl', '')
@@ -147,11 +146,12 @@ class ModelAutomater:
     def load_new_base_data_with_names(self, names, filter=True):
         if len(names) != len(self.directories):
             raise ValueError("The number of names must match the number of directories.")
-
+        dir = os.getcwd()
         for directory, name in zip(self.directories, names):
             data_parser = DataParser([directory], self.data_coordinator)
             data_parser.parse_directories(output=True, filter=filter)
-
+            frame = data_parser.get_data()
+            print(f'Loaded data from {directory} with {len(frame)} entries.')
             # Use provided name as the filename
             filename = name
 
@@ -165,8 +165,37 @@ class ModelAutomater:
 
             # Export to pickle with the resolved filename
             data_parser.export_to_pickle(self.pickle_directory + filename + '.pkl')
-
+        os.chdir(dir)
         self.load_existing_base_data()
+        os.chdir(dir)
+    def load_specific_existing_base_data(self, names):
+        """
+        Load specific existing data from the specified directory, ignoring files that match data types in data_ignore_list.
+        And also set up the feature files, like in load_existing_base_data
+        """
+        data_parser = DataParser('', self.data_coordinator)
+        data_files = {}
+        local_data_labels = []
+        for name in names:
+            file = name + '.pkl'
+            data_parser.load_from_pickle(self.pickle_directory + file)
+            data_files[file] = data_parser.get_data()
+            local_data_labels.append(file)
+        self.base_data_labels = local_data_labels
+        self.base_data_frames.update(data_files)
+        for file in data_files:
+            # Check and load corresponding feature files
+            data_type = file.replace('.pkl', '')
+            if data_type in self.data_ignore_list:
+                continue
+            feature_file = f'df_features_{data_type}.h5'
+            feature_path = os.path.join(self.feature_directory, feature_file)
+            if os.path.exists(feature_path):
+                self.feature_paths[file] = feature_path
+            else:
+                print(f"Warning: No feature file found for {file}")
+                
+        
     def load_existing_base_data(self):
         """
         Load base data while ignoring data types in data_ignore_list.
@@ -188,8 +217,8 @@ class ModelAutomater:
             else:
                 print(f"Warning: No feature file found for {file}")
 
-    def get_data(self):
-        return self.data_frames
+    def get_all_base_data(self):
+        return self.base_data_frames
     def get_all_filtered_data(self):
         return self.filtered_data_frames
     def get_data(self, data_type):
@@ -197,7 +226,7 @@ class ModelAutomater:
     
     def get_feature_paths(self):
         return self.feature_paths
-
+    
     def load_existing_features(self):
         """
         Load feature files, ignoring those corresponding to data types in data_ignore_list.
@@ -207,8 +236,12 @@ class ModelAutomater:
                 data_type = file.replace('df_features_', '').replace('.h5', '')
                 if data_type in self.data_ignore_list:
                     continue
+
+                # Check for both the regular and filtered pickle file names
                 pickle_file_name = f'{data_type}.pkl'
-                if pickle_file_name in self.base_data_frames:
+                filtered_pickle_file_name = f'{data_type}_filtered.pkl'
+
+                if pickle_file_name in self.base_data_frames or filtered_pickle_file_name in self.base_data_frames:
                     self.feature_paths[pickle_file_name] = os.path.join(self.feature_directory, file)
                 else:
                     print(f"Warning: Feature file {file} does not have a corresponding pickle file.")
@@ -362,11 +395,23 @@ class ModelAutomater:
         self.data_ignore_list.append(data_label)
     def get_ignore_list(self):
         return self.data_ignore_list
+    def load_current_base_data_as_filtered(self):
+        """fill the filtered data arrays with the current base data"""
+        self.filtered_data_frames = {}
+        self.filtered_data_labels = []
+        for label, data in self.base_data_frames.items():
+            data_type = label.replace('.pkl', '')
+            if data_type in self.data_ignore_list:
+                continue
+            
+            
+            self.filtered_data_frames[label] = data
+            self.filtered_data_labels.append(label)
+            print("appended: " + label)
     def consolidate_data(self):
         """
         Consolidate all data into a single DataFrame for training/testing, ignoring data types in data_ignore_list.
         """
-        self.load_filtered_data()
         consolidated_data = pd.DataFrame()
         for label, data in self.filtered_data_frames.items():
             # Remove '.pkl', '_filtered', and '_rebalanced' suffixes
@@ -426,7 +471,7 @@ class ModelAutomater:
         return self.training_set, self.testing_set
 
        
-    def train_model(self, model_filename, training_data, testing_data, regularizer, weight=0.3, batch_size=2500):
+    def train_model(self, model_filename, training_data, testing_data, regularizer, weight=0.3, batch_size=500):
         """
         Train a model using the given data.
         
@@ -664,7 +709,6 @@ class ModelAutomater:
                     for cutoff in self.cutoffs[cutoff_type]:
                         result = tester[cutoff]
                         threshold = self.cutoffs[cutoff_type][cutoff]
-                        print(f'{key} {cutoff_type} {cutoff}: {result} : {threshold}')
                         if(result > threshold):
                             output = False
         return output
@@ -731,8 +775,7 @@ class ModelAutomater:
         analyzer.export_model_to_lammps(os.getcwd(), model_filename, "ntaormina", "metal", "nk")
         # Validate the model
         validation_data = analyzer.validate_potential(model_filename, model_filename, ['Al', 'N'])
-        print(f"Model {model_filename} validation data: {validation_data}")
-        
+        print(f"Validation data: {validation_data}")
         # check that the validation data meets the cutoffs before saving
         if(self.check_validation_cutoffs(validation_data)):
             print("adding result")
@@ -751,8 +794,7 @@ class ModelAutomater:
         cohesive_energy = {"cohesive_energy":20.0}
         self.cutoffs = {"elastic_tensor":elastic, 
                         "lattice_constant":lattice_constant, 
-                        "surface_energy":surface_energy,
-                        "cohesive_energy":cohesive_energy}
+                        "surface_energy":surface_energy}
         model_filename = datetime.now().strftime("%Y%m%d_%H%M%S")
         structure_downloader = StructureDownloader(MP_API_KEY)
         materials = structure_downloader.get_structure_list('AlN')
@@ -837,14 +879,17 @@ class ModelAutomater:
         os.rename("validation_datas.txt", f"{self.valid_potentials_folder}/validation_datas.txt")
         
     
-    def run_grid_search(self, composition_element, composition_range, energy_range, force_range, min_force_range, regularizer_ranges):
+    def run_grid_search(self, elements, elements_list, testing_mp_structures, composition_element, composition_range, energy_range, force_range, min_force_range, regularizer_ranges):
         """
         Run a grid search to find the best hyperparameters for the model, including the regularizer values.
         """
         model_filename = datetime.now().strftime("%Y%m%d_%H%M%S")
         self.setup_valid_potential_folder()
         structure_downloader = StructureDownloader(MP_API_KEY)
-        materials = structure_downloader.get_structure_list('AlN')
+        materials = structure_downloader.get_structure_list(elements)
+        desired_materials = testing_mp_structures
+        filtered_materials = [material for material in materials if material.split(':')[0] in desired_materials]
+        materials = filtered_materials
         base_directory = os.getcwd()
         for composition in composition_range:
             for energy in energy_range:
@@ -855,15 +900,12 @@ class ModelAutomater:
                         self.load_existing_features()
                         
                         # Generate filtered data
-                        self.generate_new_filtered_data('structure', 'composition', False, composition_element, composition)
-                        self.generate_new_filtered_data('structure', 'energy_above_hull', True, energy)
+                        self.generate_new_filtered_data('structure', 'energy_above_hull', False, energy)
                         self.generate_new_filtered_data('structure', 'maximum_force', True, force, force, force)
-                        self.generate_new_filtered_data('pressure', 'increase_points', False, 500)
-                        self.generate_new_filtered_data('gpu', 'zero_force', False)
-                        self.generate_new_filtered_data('gpu', 'reduce_points', False, 1000)
                         self.copy_unfiltered_data()
+                        self.load_filtered_data()
                         self.consolidate_data()
-                        training, testing = self.split_data(0.01)
+                        training, testing = self.split_data(0.10)
                         for ridge_1b in regularizer_ranges['ridge_1b']:
                             for ridge_2b in regularizer_ranges['ridge_2b']:
                                 for ridge_3b in regularizer_ranges['ridge_3b']:
@@ -894,15 +936,23 @@ class ModelAutomater:
                                             else:
                                                 frame = self.parity_frame
                                                 structure_feature = self.parity_feature
-                                            analyzer = ModelAnalyzer(chemical_system, trainer_model, bspline_config, frame, frame, structure_feature)                                      
+                                            testing_indices = set(testing.index)
+                                            frame_indices = set(frame.index)
+                                            overlap_indices = testing_indices & frame_indices
+                                            print(f"Overlap between frame and testing set: {len(overlap_indices)} items")
+
+                                            # Split frame data into training and testing subsets
+                                            train_frame = frame[~frame.index.isin(testing_indices)]
+                                            test_frame = frame[frame.index.isin(testing_indices)]
+                                            analyzer = ModelAnalyzer(chemical_system, trainer_model, bspline_config, train_frame, test_frame, structure_feature)                                      
                                             # Export model to LAMMPS format
                                             model_filename = datetime.now().strftime("%Y%m%d_%H%M%S")
                                             analyzer.set_dft_validation_structures(materials)
                                             analyzer.set_lammps_validation_structures(materials)
-                                            analyzer.export_model_to_lammps("potentials/", model_filename, "ntaormina", "metal", "nk")
-                                            analyzer.export_model_to_lammps(os.getcwd(), model_filename, "ntaormina", "metal", "nk")
+                                            analyzer.export_model_to_lammps("potentials/", model_filename, True, "ntaormina", "metal", "nk")
+                                            analyzer.export_model_to_lammps(os.getcwd(), model_filename, True, "ntaormina", "metal", "nk")
                                             # Validate the model
-                                            validation_data = analyzer.validate_potential(model_filename, model_filename, ['Al', 'N'])
+                                            validation_data = analyzer.validate_potential(model_filename, model_filename, elements_list)
                                             print(f"Model {model_filename} validation data: {validation_data}")
                                             
                                             # Store validation data

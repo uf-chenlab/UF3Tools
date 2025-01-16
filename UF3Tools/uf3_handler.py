@@ -789,6 +789,15 @@ class DataFilter:
                 ~self.data['fy'].apply(lambda x: all(x == 0)) &
                 ~self.data['fz'].apply(lambda x: all(x == 0))
             ]
+            
+    def filter_out_indices(self, indices):
+        """
+        Filter out data points with the specified indices.
+
+        :param indices: List of indices to filter out.
+        """
+        print(f"Filtering out data points with indices: {indices}")
+        self.data = self.data[~self.data.index.isin(indices)]
 
     def export_to_pickle(self, filename):
         """
@@ -1153,8 +1162,10 @@ class ModelAnalyzer:
         for element_list in self.chemical_system.interactions_map[3]:
             self.analyze_3b(element_list, self.model)
         self.generate_density_plot(analysis)
-        self.test_model_prediction(training = training)
+        results = self.test_model_prediction(training = training)
+        #results = self.export_prediction_data_to_dataframe()
         self.generate_parity_plots()
+        return results
     def generate_density_plot(self, analysis):
         canvases = plotting.plot_pair_distributions(analysis, show_cutoffs=False)
         for fig, ax in canvases:
@@ -1194,13 +1205,10 @@ class ModelAnalyzer:
         """
         Test the model prediction.
         """
-        if training:
-            keys = self.training_keys
-        else:
-            keys = self.testing_keys
+        keys = self.testing_keys if training is False else self.training_keys
 
-        y_e, p_e, y_f, p_f, rmse_e, rmse_f = self.model.batched_predict(self.feature_filenames, 
-                                                                         keys=keys)
+        y_e, p_e, y_f, p_f, rmse_e, rmse_f, ids, force_ids = self.model.batched_predict(self.feature_filenames, keys=keys)
+
 
         # Store results in a dictionary
         self.prediction_data = {
@@ -1209,10 +1217,81 @@ class ModelAnalyzer:
             "y_f": y_f,
             "p_f": p_f,
             "rmse_e": rmse_e,
-            "rmse_f": rmse_f
+            "rmse_f": rmse_f,
+            "ids": ids,
+            "force_ids": force_ids
         }
+        # print("test model prediction ids:", ids)
+        # print("test model prediction force ids:", force_ids)
+        
 
         return self.prediction_data
+    def export_prediction_data_to_dataframe(self):
+        """
+        Converts the prediction data dictionary into Pandas DataFrames and returns them.
+
+        Parameters:
+            prediction_data (dict): Dictionary containing model prediction data with keys 
+                                ['y_e', 'p_e', 'y_f', 'p_f', 'rmse_e', 'rmse_f'].
+
+        Returns:
+            dict: A dictionary with keys as DataFrame names and values as DataFrame objects.
+        """
+        # Create DataFrames for each relevant key
+        results = {}
+
+        # Energies Data
+        if "y_e" in self.prediction_data and "p_e" in self.prediction_data:
+            df_energies = pd.DataFrame({
+                "True Energies (y_e)": self.prediction_data["y_e"],
+                "Predicted Energies (p_e)": self.prediction_data["p_e"]
+            })
+            results["energies"] = df_energies
+
+        # Forces Data
+        if "y_f" in self.prediction_data and "p_f" in self.prediction_data:
+            df_forces = pd.DataFrame({
+                "True Forces (y_f)": self.prediction_data["y_f"],
+                "Predicted Forces (p_f)": self.prediction_data["p_f"]
+            })
+            results["forces"] = df_forces
+
+        # RMSE Values
+        if "rmse_e" in self.prediction_data and "rmse_f" in self.prediction_data:
+            df_rmse = pd.DataFrame({
+                "RMSE Energies (rmse_e)": [self.prediction_data["rmse_e"]],
+                "RMSE Forces (rmse_f)": [self.prediction_data["rmse_f"]]
+            })
+            results["rmse"] = df_rmse
+
+        return results
+    def find_problematic_data(self, energy_cutoff, force_cutoff):
+        """
+        Returns the indices of the problematic data points.
+        """
+        #Energy #normalized error
+        energy_error = np.abs(self.prediction_data["y_e"] - self.prediction_data["p_e"]) / np.std(self.prediction_data["y_e"])
+        #force normalized error
+        force_error = np.abs(self.prediction_data["y_f"] - self.prediction_data["p_f"]) / np.std(self.prediction_data["y_f"])
+        # Find the indices of the problematic data points
+        problematic_energy = np.where(energy_error > energy_cutoff)[0]
+        problematic_force = np.where(force_error > force_cutoff)[0]
+        #get the ids of the problematic data points
+        problematic_energy_ids = [self.prediction_data["ids"][i] for i in problematic_energy]
+        problematic_force_ids = [self.prediction_data["force_ids"][i] for i in problematic_force]
+        #make a combined data frame of id and error for each data type
+        problematic_energy_data = pd.DataFrame({
+            "ID": problematic_energy_ids,
+            "Error": energy_error[problematic_energy]
+        })
+        problematic_force_data = pd.DataFrame({
+            "ID": problematic_force_ids,
+            "Error": force_error[problematic_force]
+        })
+        #get unique ids
+        problematic_energy_ids = list(set(problematic_energy_ids))
+        problematic_force_ids = list(set(problematic_force_ids))
+        return problematic_energy_ids, problematic_force_ids, problematic_energy_data, problematic_force_data
     def generate_parity_plots(self):
         """
         Generate parity plots.
@@ -1339,36 +1418,36 @@ class ModelAnalyzer:
             os.chdir(current_directory)
             
             # Cohesive Energy Validation 
-            print("cohesive energy validation")
-            cohesive_energy = CohesiveEnergyValidation(potential_file, lammps_file, dft_file, element_list_str,validation_folder_path)
-            cohesive_energy.initialize_simulation_files()
-            dft_cohesive_energy_path = os.path.join(validation_folder_path, "dft/simulations/CohesiveEnergySimulation/results.txt")
-            cohesive_energy.retrieve_dft_result("cohesive_energy", "cohesive_energy", dft_cohesive_energy_path)
-            cohesive_energy_percent_error = cohesive_energy.start_validation(overwrite=True, local=False)
-            data.add_validation("cohesive_energy", cohesive_energy_percent_error)
-            os.chdir(current_directory)
+            # print("cohesive energy validation")
+            # cohesive_energy = CohesiveEnergyValidation(potential_file, lammps_file, dft_file, element_list_str,validation_folder_path)
+            # cohesive_energy.initialize_simulation_files()
+            # dft_cohesive_energy_path = os.path.join(validation_folder_path, "dft/simulations/CohesiveEnergySimulation/results.txt")
+            # cohesive_energy.retrieve_dft_result("cohesive_energy", "cohesive_energy", dft_cohesive_energy_path)
+            # cohesive_energy_percent_error = cohesive_energy.start_validation(overwrite=True, local=False)
+            # data.add_validation("cohesive_energy", cohesive_energy_percent_error)
+            # os.chdir(current_directory)
 
             # #Elastic Tensor Validation
-            # print("Elastic Tensor Validation")
-            # tensor = ElasticTensorValidation(potential_file, lammps_file, dft_file, element_list_str,validation_folder_path)
-            # tensor.initialize_simulation_files()
-            # dft_tensor_path = os.path.join(validation_folder_path, "dft/simulations/ElasticTensor/results.txt")
-            # tensor.retrieve_dft_result("elastic_tensor", "elastic_tensor", dft_tensor_path)
-            # tensor_percent_error = tensor.start_validation(overwrite=True, local=False)
-            # data.add_validation("elastic_tensor", tensor_percent_error)
-            # os.chdir(current_directory)
-            # # Surface Energy Validation 
-            # print("surface energy validation")
-            # surface_energy = SurfaceEnergyValidation(potential_file, lammps_file, dft_file, element_list_str,validation_folder_path)
-            # surface_energy.initialize_simulation_files()
-            # dft_surface_energy_path = os.path.join(validation_folder_path, "dft/simulations/SurfaceEnergySimulation/")
-            # surface_energy.retrieve_dft_result("surface_energy", "surface_energy", dft_surface_energy_path)
-            # surface_energy_percent_error = surface_energy.start_validation(overwrite=True, local=False)
-            # data.add_validation("surface_energy", surface_energy_percent_error)
-            # os.chdir(current_directory)
+            print("Elastic Tensor Validation")
+            tensor = ElasticTensorValidation(potential_file, lammps_file, dft_file, element_list_str,validation_folder_path)
+            tensor.initialize_simulation_files()
+            dft_tensor_path = os.path.join(validation_folder_path, "dft/simulations/ElasticTensor/results.txt")
+            tensor.retrieve_dft_result("elastic_tensor", "elastic_tensor", dft_tensor_path)
+            tensor_percent_error = tensor.start_validation(overwrite=True, local=False)
+            data.add_validation("elastic_tensor", tensor_percent_error)
+            os.chdir(current_directory)
+            # Surface Energy Validation 
+            print("surface energy validation")
+            surface_energy = SurfaceEnergyValidation(potential_file, lammps_file, dft_file, element_list_str,validation_folder_path)
+            surface_energy.initialize_simulation_files()
+            dft_surface_energy_path = os.path.join(validation_folder_path, "dft/simulations/SurfaceEnergySimulation/")
+            surface_energy.retrieve_dft_result("surface_energy", "surface_energy", dft_surface_energy_path)
+            surface_energy_percent_error = surface_energy.start_validation(overwrite=True, local=False)
+            data.add_validation("surface_energy", surface_energy_percent_error)
+            os.chdir(current_directory)
             # Append the validation data
             datas.append(data)
-
+            print("validation data: ", data)
             # Return to the initial directory after processing each structure
             os.chdir(current_directory)
 
