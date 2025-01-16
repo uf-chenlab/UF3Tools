@@ -1081,11 +1081,22 @@ class ModelTrainer:
         Train the model.
         """
         self.model.fit_from_file(filename, self.train_keys, weight=weight, batch_size=batch_size, energy_key="energy", progress='bar')
+    def train_model_parallel(self, filename, weight=0.3, batch_size=2500,num_cores=1):
+        """
+        Train the model.
+        """
+        print("training parallel model with cores: ", num_cores)
+        self.model.fit_from_file_parallel(filename, self.train_keys, weight=weight, batch_size=batch_size, energy_key="energy", num_cores=num_cores, progress='bar')
     def train_model_multiple_files(self, filenames, weight=0.3, batch_size=2500):
         """
         Train the model using multiple files.
         """
         self.model.fit_from_files(filenames, self.train_keys, weight=weight, batch_size=batch_size, energy_key='energy', progress='bar')
+    def train_model_multiple_files_parallel(self, filenames, weight=0.3, batch_size=2500, num_cores=1):
+        """
+        Train the model using multiple files.
+        """
+        self.model.fit_from_files_parallel(filenames, self.train_keys, weight=weight, batch_size=batch_size, energy_key='energy', num_cores=num_cores, progress='bar')
     def export_model(self, filename):
         """
         Export the model to a file.

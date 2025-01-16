@@ -512,6 +512,47 @@ class ModelAutomater:
         trainer.export_model(model_filename + ".json")
         #analyzer = ModelAnalyzer(self.chemical_system, trainer.get_model(), trainer.get_bspline_config(), training_data, structure, structure_feature)
         return self.chemical_system, trainer.get_model(), trainer.get_bspline_config(), features, model_filename
+    def train_model_parallel(self, model_filename, training_data, testing_data, regularizer, weight=0.3, batch_size=500, num_cores=1):
+        """
+        Train a model using the given data.
+        
+        Parameters:
+        - regularizer: Regularization parameter for the model.
+        - weight: Class weight for the model.
+        - batch_size: Batch size for training.
+        """
+        #get the actual data from self.feature_paths
+        features = []
+        for key in self.feature_paths:
+            print(f"key: {key}")
+            #remove .pkl from the key
+            data_type = key.replace('.pkl', '')
+            if(data_type in self.data_ignore_list):
+                continue
+            features.append(self.feature_paths[key])
+            print(f"feature path: {self.feature_paths[key]}")
+        #find the structures feature file
+        for feature in features:
+            if 'structure' in feature:
+                structure_feature = feature
+                break
+        trainer = ModelTrainer(self.model_data, self.chemical_system, self.maps, regularizer)
+        trainer.set_training_set(training_data)
+        print(f"trainer training length: {len(trainer.get_training_set())}")
+        trainer.set_testing_set(testing_data)
+        print(f"trainer testing length: {len(trainer.get_testing_set())}")
+        print(f"feature file list length: {len(features)}")
+        if(len(features) == 0):
+            print("No features found")
+            return
+        if(len(features) == 1):
+            print(f'Training model with single feature file {features[0]}')
+            trainer.train_model_parallel(features[0], weight, batch_size, num_cores)
+        else:
+            trainer.train_model_multiple_files_parallel(features, weight, batch_size, num_cores)
+        trainer.export_model(model_filename + ".json")
+        #analyzer = ModelAnalyzer(self.chemical_system, trainer.get_model(), trainer.get_bspline_config(), training_data, structure, structure_feature)
+        return self.chemical_system, trainer.get_model(), trainer.get_bspline_config(), features, model_filename
     def import_model(self, regularizer, model_filename):
         """
         Import a pre-trained model from a file.
@@ -783,7 +824,7 @@ class ModelAutomater:
         
         # Remove potential file from current working directory
         os.remove(f"{model_filename}")
-    def run_cutoff_grid_search(self, composition_element, composition_range, energy_range, force_range, min_force_range, regularizer_ranges):
+    def run_cutoff_grid_search(self, composition_element, composition_range, energy_range, force_range, min_force_range, regularizer_ranges, weight_range, num_cores=1):
         print("not ready yet")
         base_directory = os.getcwd()
         self.setup_valid_potential_folder()
@@ -818,63 +859,63 @@ class ModelAutomater:
                         self.copy_unfiltered_data()
                         self.consolidate_data()
                         training, testing = self.split_data(0.01)
-
-                        for ridge_1b in regularizer_ranges['ridge_1b']: #start regularizer test (don't need to reload data)
-                            for ridge_2b in regularizer_ranges['ridge_2b']:
-                                for ridge_3b in regularizer_ranges['ridge_3b']:
-                                    for curvature_2b in regularizer_ranges['curvature_2b']:
-                                        for curvature_3b in regularizer_ranges['curvature_3b']:
-                                            print(f"Running grid search for"
-                                                f"ridge_1b={ridge_1b}, ridge_2b={ridge_2b}, ridge_3b={ridge_3b}, "
-                                                f"curvature_2b={curvature_2b}, curvature_3b={curvature_3b}")
-                                            
-                                            model_filename = (f'ridge1b_{ridge_1b}_ridge2b_{ridge_2b}_ridge3b_{ridge_3b}_'
-                                                            f'curv2b_{curvature_2b}_curv3b_{curvature_3b}')
-                                            
-                                            # Set the current regularizer values
-                                            regularizer = dict(ridge_1b=ridge_1b,
-                                                            ridge_2b=ridge_2b,
-                                                            ridge_3b=ridge_3b,
-                                                            curvature_2b=curvature_2b,
-                                                            curvature_3b=curvature_3b)
-                                            chemical_system, trainer_model,bspline_config, features, NULL = self.train_model(model_filename + ".json", training, testing, regularizer)
-                                            if(self.parity_frame is None):
-                                                if(self.filtered_data_frames.__contains__('structure_filtered.pkl')):
-                                                    frame = self.get_data('structure_filtered.pkl')
-                                                    for feature in features:
-                                                        if 'structure' in feature:
-                                                            structure_feature = feature
-                                                            break
-                                                else:
-                                                    #get first frame in filtered data
-                                                    frame = self.filtered_data_frames[self.filtered_data_labels[0]]
-                                                    for feature in features:
-                                                        if self.filtered_data_labels[0].replace('_filtered.pkl', '') in feature:
-                                                            structure_feature = feature
-                                                            break
-                                            else:
-                                                frame = self.parity_frame
-                                                structure_feature = self.parity_feature
-                                            analyzer = ModelAnalyzer(chemical_system, trainer_model, bspline_config, frame, frame, structure_feature)                                      
-                                            # Export model to LAMMPS format
-                                            materials = [materials[0]]
-                                            analyzer.set_dft_validation_structures(materials)
-                                            analyzer.set_lammps_validation_structures(materials)
-                                            analyzer.export_model_to_lammps("potentials/", model_filename, True, "ntaormina", "metal", "nk")
-                                            analyzer.export_model_to_lammps(os.getcwd(), model_filename, True, "ntaormina", "metal", "nk")
-                                            # Validate the model
-                                            validation_data = analyzer.validate_potential(model_filename, model_filename, ['Al', 'N'])
-                                            # check that the validation data meets the cutoffs before saving
-                                            if(self.check_validation_cutoffs(validation_data) or True): #true debug flag
-                                                self.store_validation_data(model_filename, validation_data)
-                                                print(f"Model {model_filename} validation data: {validation_data}")
-                                                self.accept_model(model_filename)
-                                            else:
-                                                print(f"Model {model_filename} did not meet cutoffs")
-                                                # Remove potential file from current working directory
-                                                os.remove(f"{model_filename}")
+                        for weight in weight_range:
+                            for ridge_1b in regularizer_ranges['ridge_1b']: #start regularizer test (don't need to reload data)
+                                for ridge_2b in regularizer_ranges['ridge_2b']:
+                                    for ridge_3b in regularizer_ranges['ridge_3b']:
+                                        for curvature_2b in regularizer_ranges['curvature_2b']:
+                                            for curvature_3b in regularizer_ranges['curvature_3b']:
+                                                print(f"Running grid search for"
+                                                    f"ridge_1b={ridge_1b}, ridge_2b={ridge_2b}, ridge_3b={ridge_3b}, "
+                                                    f"curvature_2b={curvature_2b}, curvature_3b={curvature_3b}")
                                                 
-                                            os.chdir(base_directory)
+                                                model_filename = (f'ridge1b_{ridge_1b}_ridge2b_{ridge_2b}_ridge3b_{ridge_3b}_'
+                                                                f'curv2b_{curvature_2b}_curv3b_{curvature_3b}')
+                                                
+                                                # Set the current regularizer values
+                                                regularizer = dict(ridge_1b=ridge_1b,
+                                                                ridge_2b=ridge_2b,
+                                                                ridge_3b=ridge_3b,
+                                                                curvature_2b=curvature_2b,
+                                                                curvature_3b=curvature_3b)
+                                                chemical_system, trainer_model,bspline_config, features, NULL = self.train_model_parallel(model_filename + ".json", training, testing, regularizer=regularizer, weight=weight, num_cores=num_cores)
+                                                if(self.parity_frame is None):
+                                                    if(self.filtered_data_frames.__contains__('structure_filtered.pkl')):
+                                                        frame = self.get_data('structure_filtered.pkl')
+                                                        for feature in features:
+                                                            if 'structure' in feature:
+                                                                structure_feature = feature
+                                                                break
+                                                    else:
+                                                        #get first frame in filtered data
+                                                        frame = self.filtered_data_frames[self.filtered_data_labels[0]]
+                                                        for feature in features:
+                                                            if self.filtered_data_labels[0].replace('_filtered.pkl', '') in feature:
+                                                                structure_feature = feature
+                                                                break
+                                                else:
+                                                    frame = self.parity_frame
+                                                    structure_feature = self.parity_feature
+                                                analyzer = ModelAnalyzer(chemical_system, trainer_model, bspline_config, frame, frame, structure_feature)                                      
+                                                # Export model to LAMMPS format
+                                                materials = [materials[0]]
+                                                analyzer.set_dft_validation_structures(materials)
+                                                analyzer.set_lammps_validation_structures(materials)
+                                                analyzer.export_model_to_lammps("potentials/", model_filename, True, "ntaormina", "metal", "nk")
+                                                analyzer.export_model_to_lammps(os.getcwd(), model_filename, True, "ntaormina", "metal", "nk")
+                                                # Validate the model
+                                                validation_data = analyzer.validate_potential(model_filename, model_filename, ['Al', 'N'])
+                                                # check that the validation data meets the cutoffs before saving
+                                                if(self.check_validation_cutoffs(validation_data) or True): #true debug flag
+                                                    self.store_validation_data(model_filename, validation_data)
+                                                    print(f"Model {model_filename} validation data: {validation_data}")
+                                                    self.accept_model(model_filename)
+                                                else:
+                                                    print(f"Model {model_filename} did not meet cutoffs")
+                                                    # Remove potential file from current working directory
+                                                    os.remove(f"{model_filename}")
+                                                    
+                                                os.chdir(base_directory)
         #all done, copy the validation data to the valid_potentials folder
         os.rename("validation_datas.txt", f"{self.valid_potentials_folder}/validation_datas.txt")
         
