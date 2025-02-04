@@ -19,6 +19,7 @@ class LammpsSimulationManager(SimulationManager):
         :param simulation_type: The type of simulation to set up (e.g., "relaxation").
         :param kwargs: Additional arguments needed for the specific simulation.
         """
+        print("creating simulation")
         if simulation_type.lower() == "relaxation":
             template_directory = os.path.join(self.parent_directory, "templates/lattice_parameters/")
             self.simulation = RelaxationSimulation(self.simulation_dir, template_directory, **kwargs)
@@ -36,7 +37,7 @@ class LammpsSimulationManager(SimulationManager):
             self.simulation = CohesiveEnergySimulation(self.simulation_dir, template_directory, **kwargs)
         else:
             raise ValueError(f"Simulation type '{simulation_type}' is not supported.")
-
+        print("object created")
         # Set up the input file for the simulation
         self.simulation.setup_input_file()
         return self.simulation

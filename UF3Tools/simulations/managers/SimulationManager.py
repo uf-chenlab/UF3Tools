@@ -20,19 +20,24 @@ class SimulationManager:
         """
         Set up a simulation directory and call the create_simulation method.
         """
+        
+        print(f"simulation manager: {self.parent_directory}, {self.root_directory}, {self.basic_files_directory}")
         # Remove underscores, capitalize each word segment, and concatenate
         formatted_simulation_type = simulation_type.replace('_', ' ').title().replace(' ', '')
         
         # Set up the simulation directory path
         self.simulation_dir = os.path.join(self.root_directory, formatted_simulation_type + "Simulation")
+        print(f"simulation directory: {self.simulation_dir}")
 
         # Create the simulation directory if it doesn't exist
         if not os.path.exists(self.simulation_dir):
             os.makedirs(self.simulation_dir)
-        
+        print("directory made")
         self.create_simulation(simulation_type, **kwargs)
+        print("simulation created")
         # Copy basic files into the simulation directory
         self.copy_basic_files(self.simulation_dir)
+        print("basic files copied")
         # Create the specific simulation setup
         
 
@@ -58,7 +63,7 @@ class SimulationManager:
         """
         if self.basic_files_directory is None:
             self.find_basic_files_directory()
-
+        print("basic files directory: ", self.basic_files_directory)
         # Check for subdirectories in the simulation directory
         subdirs = [os.path.join(simulation_dir, d) for d in os.listdir(simulation_dir) if os.path.isdir(os.path.join(simulation_dir, d)) and not d.startswith('.')]
 

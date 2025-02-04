@@ -15,6 +15,7 @@ class RelaxationSimulation:
         self.original_directory = os.getcwd()
         self.simulation_directory = simulation_directory
         self.output_file = os.path.join(simulation_directory, "lammps.in")
+        print(f'files: {self.template_file}, {self.original_directory}, {self.simulation_directory}, {self.output_file}')
         self.parameters = {
             'atom_style': 'atomic',
             'uf3_degree': '3',
@@ -41,6 +42,7 @@ class RelaxationSimulation:
         """
         Set up the LAMMPS input file for the relaxation simulation.
         """
+        
         handler = LammpsInputFileHandler(self.template_file, self.output_file) 
         handler.update_simulation_parameters(**self.parameters)
         handler.generate_input_file()

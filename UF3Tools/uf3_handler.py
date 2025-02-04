@@ -32,6 +32,22 @@ from UF3Tools.simulations.validations.SurfaceEnergyValidation import SurfaceEner
 from UF3Tools.simulations.validations.CohesiveEnergyValidation import CohesiveEnergyValidation
 from UF3Tools.common.MPAPIKey import MP_API_KEY
 from UF3Tools.common.StructureDownloader import StructureDownloader
+class UF3FileHandler:
+    def __init__(self, path):
+        self.path = path
+    def clear_directory(self):
+        for file in os.listdir(self.path):
+            file_path = os.path.join(self.path, file)
+            if os.path.isfile(file_path):  # Ensuring only files are deleted
+                os.remove(file_path)
+    def get_files(self):
+        return os.listdir(self.path)
+    def get_file(self, filename):
+        return os.path.join(self.path, filename)
+    def backup_directory(self, backup_path):
+        os.makedirs(backup_path, exist_ok=True)
+        shutil.copytree(self.path, backup_path)
+    
 class RunDataPhaseDiagram:
     def __init__(self, path):
         self.path = path
@@ -112,8 +128,6 @@ class DataParser:
                     if root in visited_directories:
                         continue
                     visited_directories.add(root)
-                    if output:
-                        print(f"Looking in folder: {os.getcwd()}")
                     
                     # Split the directory path and concatenate the relevant parent directories
                     relative_path = os.path.relpath(root, directory)
@@ -124,8 +138,6 @@ class DataParser:
                     outcar_files = glob.glob(os.path.join(root, 'OUTCAR*'))
                     
                     for file in outcar_files:
-                        if output:
-                            print(f"Processing file: {file}")
                         try:
                             # Extract the run number and index from the filename
                             match = re.match(r'OUTCAR_(\d+)_(\d+)', os.path.basename(file))
@@ -141,7 +153,6 @@ class DataParser:
                             # Use the data_coordinator to parse the file and update the data.
                             # if prefix contains anything from the data type list, turn off the filter
                             if filter:
-                                print("filter is on")
                                 for data_type in DataSetAnalyzer.DATA_TYPE_PREFIXES.values():
                                     if data_type.lower() in prefix.lower():
                                         filter = False
@@ -734,7 +745,45 @@ class DataFilter:
             self.data = self.data[self.data[f'{element}_frac'] <= percent]
         else:
             print(f"Element {element} fraction not found in data. Please add columns for each element fraction using StructureParser.")
-    
+    def filter_composition_range(self, element, el_range):
+        print(f'Filterout out data with {element} composition outside of {el_range[0]} and {el_range[1]}.')
+        #check if data has a fraction column for the element
+        if f'{element}_frac' in self.data.columns:
+            self.data = self.data[(self.data[f'{element}_frac'] >= el_range[0]) & (self.data[f'{element}_frac'] <= el_range[1])]
+        else:
+            print(f"Element {element} fraction not found in data. Please add columns for each element fraction using StructureParser.")
+    def filter_gas(self, element):
+        """
+        Filters out rows from the dataframe containing the specified gas in the composition.
+
+        Args:
+            element (str): Element symbol to check for gas (e.g., 'H' for 'H2').
+        """
+        print(f'Filtering out data with {element}2 gas in the composition.')
+        
+        gas = f'{element}2'
+
+        def has_gas(row):
+            try:
+                # Convert geometry to ASE Atoms and check for the gas in the symbols
+                #atoms = AseAtomsAdaptor().get_atoms(AseAtomsAdaptor().get_structure(str(row['geometry'])))
+                return gas in str(row['geometry'])
+            except Exception as e:
+                print(f"Error processing row: {e}")
+                return False
+
+        # Filter rows efficiently using DataFrame's .apply method
+        self.data = self.data[~self.data.apply(has_gas, axis=1)]
+        
+        print(f"Removed rows containing {gas}.")
+    def filter_min_epa(self, threshold):
+        print(f"Filtering data for energy per atom greater than {threshold}.")
+        self.data = self.data[self.data['energy_per_atom'] >= threshold]
+    def filter_max_epa(self, threshold):
+        print(f"Filtering data for energy per atom less than {threshold}.")
+        self.data = self.data[self.data['energy_per_atom'] <= threshold]
+
+        
     def filter_energy_above_hull(self, threshold):
         print(f"Filtering data for energies less than {threshold}.")
         #check if data has an energy above hull column
@@ -906,7 +955,10 @@ class Featurizer:
             adjusted_batch_size = round(adjusted_batch_size)
             print(f"Adjusted batch size to {adjusted_batch_size} due to smaller dataset.")
             
-
+        if(adjusted_batch_size <= 1):
+            adjusted_batch_size = adjusted_batch_size + 1
+            print(f"Adjusted batch size to {adjusted_batch_size} due to smaller dataset.")
+            
         # Featurization
         self.representation.batched_to_hdf(
             output_filename,
@@ -1076,27 +1128,27 @@ class ModelTrainer:
         :param testing_set: DataFrame containing the testing set.
         """
         self.testing_set = testing_set
-    def train_model(self, filename, weight=0.3, batch_size=2500):
+    def train_model(self, filename, weight=0.3, batch_size=2500, sample_weights=None):
         """
         Train the model.
         """
-        self.model.fit_from_file(filename, self.train_keys, weight=weight, batch_size=batch_size, energy_key="energy", progress='bar')
-    def train_model_parallel(self, filename, weight=0.3, batch_size=2500,num_cores=1):
+        self.model.fit_from_file(filename, self.train_keys, weight=weight, batch_size=batch_size, energy_key="energy", progress='bar',sample_weights=sample_weights)
+    def train_model_parallel(self, filename, weight=0.3, batch_size=2500,num_cores=1,callback=None, position=0, sample_weights=None):
         """
         Train the model.
         """
         print("training parallel model with cores: ", num_cores)
-        self.model.fit_from_file_parallel(filename, self.train_keys, weight=weight, batch_size=batch_size, energy_key="energy", num_cores=num_cores, progress='bar')
-    def train_model_multiple_files(self, filenames, weight=0.3, batch_size=2500):
+        self.model.fit_from_file_parallel(filename, self.train_keys, weight=weight, batch_size=batch_size, energy_key="energy", num_cores=num_cores, progress='bar', sample_weights=sample_weights)
+    def train_model_multiple_files(self, filenames, weight=0.3, batch_size=2500, sample_weights=None):
         """
         Train the model using multiple files.
         """
-        self.model.fit_from_files(filenames, self.train_keys, weight=weight, batch_size=batch_size, energy_key='energy', progress='bar')
-    def train_model_multiple_files_parallel(self, filenames, weight=0.3, batch_size=2500, num_cores=1):
+        self.model.fit_from_files(filenames, self.train_keys, weight=weight, batch_size=batch_size, energy_key='energy', progress='bar',sample_weights=sample_weights)
+    def train_model_multiple_files_parallel(self, filenames, weight=0.3, batch_size=2500, num_cores=1,callback=None,position=0, sample_weights=None):
         """
         Train the model using multiple files.
         """
-        self.model.fit_from_files_parallel(filenames, self.train_keys, weight=weight, batch_size=batch_size, energy_key='energy', num_cores=num_cores, progress='bar')
+        self.model.fit_from_files_parallel(filenames, self.train_keys, weight=weight, batch_size=batch_size, energy_key='energy', num_cores=num_cores, progress='bar', sample_weights=sample_weights)
     def export_model(self, filename):
         """
         Export the model to a file.
@@ -1120,7 +1172,203 @@ class ModelTrainer:
         :return: Model object.
         """
         return self.model
+class ModelTrainerMultipleSteps:
+    def __init__(self, data, chemical_system, maps, regularizer):
+        """
+        Initialize the ModelTrainer with a DataFrame containing parsed data.
+
+        :param data: DataFrame containing parsed data.
+        """
+        self.data = data
+        self.chemical_system = chemical_system
+        self.maps = maps
+        self.bspline_config = bspline.BSplineBasis(chemical_system,
+                                                   r_min_map = maps['r_min_map'], 
+                                                   r_max_map = maps['r_max_map'],
+                                                   resolution_map=maps['r_resolution_map'],
+                                                   leading_trim=maps['leading_trim'],
+                                                   trailing_trim=maps['trailing_trim'])
+        self.representation = process.BasisFeaturizer(self.bspline_config)
+        self.regularizer = self.bspline_config.get_regularization_matrix(ridge_1b=regularizer['ridge_1b'],
+                                                                    ridge_2b=regularizer['ridge_2b'],
+                                                                    ridge_3b=regularizer['ridge_3b'],
+                                                                    curvature_2b=regularizer['curvature_2b'],
+                                                                    curvature_3b=regularizer['curvature_3b'])
+        self.model = least_squares.WeightedLinearModel(self.bspline_config, self.regularizer)
+        self.model.initialize_accumulators()
+    def get_data(self):
+        """
+        Get the DataFrame containing the parsed data.
+
+        :return: DataFrame containing the parsed data.
+        """
+        return self.data
+    def set_data(self, data):
+        """
+        Set a new DataFrame containing parsed data.
+        """
+        self.data = data
+    def get_bspline_config(self):
+        """
+        Get the bspline configuration.
+        """
+        return self.bspline_config
+    def set_bspline_config(self, bspline_config):
+        """
+        Set the bspline configuration.
+        """
+        self.bspline_config = bspline_config
+    def get_maps(self):
+        """
+        Get the maps.
+        """
+        return self.maps
+    def set_maps(self, maps):
+        """
+        Set the maps.
+        """
+        self.maps = maps
+    def get_chemical_system(self):
+        """
+        Get the chemical system.
+        """
+        return self.chemical_system
+    def set_chemical_system(self, chemical_system):
+        """
+        Set the chemical system.
+        """
+        self.chemical_system = chemical_system
+    def get_element_list(self):
+        """
+        Get the list of elements in the chemical system.
+        """
+        return self.chemical_system.elements
+    def get_unique_indices(self):
+        """
+        Get the unique indices in the DataFrame.
+
+        :return: List of unique indices.
+        """
+        return self.data.index.to_series().apply(lambda x: '_'.join(x.split('_')[:2])).unique()
+    def split_data(self, test_percent, filter_index=True):
+        """
+        Split the data into training and testing sets.
+
+        Parameters:
+        - test_percent: Fraction of data to use for testing.
+        - filter_index: Boolean flag to determine whether or not to require indices
+        to be fully in either train or test.
+        """
+        # Get unique index prefixes
+        index_prefixes = self.get_unique_indices()
         
+        np.random.seed(42)  # for reproducibility
+        num_indices_to_select = int(test_percent * len(index_prefixes))
+        selected_prefixes = np.random.choice(index_prefixes, num_indices_to_select, replace=False)
+
+        if filter_index:
+            # Filter data for testing set based on the selected prefixes
+            self.testing_set = self.data[self.data.index.to_series().apply(lambda x: '_'.join(x.split('_')[:2])).isin(selected_prefixes)]
+
+            # Filter data for training set
+            self.training_set = self.data[~self.data.index.isin(self.testing_set.index)]
+        else:
+            # Shuffle and split data without filtering based on prefixes
+            shuffled_data = self.data.sample(frac=1, random_state=42)
+            split_point = int(len(shuffled_data) * (1 - test_percent))
+            self.training_set = shuffled_data.iloc[:split_point]
+            self.testing_set = shuffled_data.iloc[split_point:]
+
+        # Store the indices for training and testing sets
+        self.train_keys = self.training_set.index
+        self.test_keys = self.testing_set.index
+
+        print(f"Training set length: {len(self.training_set)}. Testing set length: {len(self.testing_set)}")
+        return self.training_set, self.testing_set
+
+    def export_train_to_pickle(self, filename):
+        """
+        Export the training set to a pickle file.
+
+        :param filename: Name of the pickle file.
+        """
+        self.training_set.to_pickle(filename)
+        print(f'Training set has been saved to {filename}')
+    def export_test_to_pickle(self, filename):
+        """
+        Export the testing set to a pickle file.
+
+        :param filename: Name of the pickle file.
+        """
+        self.testing_set.to_pickle(filename)
+        print(f'Testing set has been saved to {filename}')
+    def get_training_set(self):
+        """
+        Get the training set.
+
+        :return: DataFrame containing the training set.
+        """
+        return self.training_set
+    def get_testing_set(self):
+        """
+        Get the testing set.
+
+        :return: DataFrame containing the testing set.
+        """
+        return self.testing_set
+    def set_training_set(self, training_set):
+        """
+        Set the training set.
+
+        :param training_set: DataFrame containing the training set.
+        """
+        self.training_set = training_set
+        self.train_keys= self.training_set.index
+    def set_testing_set(self, testing_set):
+        """
+        Set the testing set.
+
+        :param testing_set: DataFrame containing the testing set.
+        """
+        self.testing_set = testing_set
+    def train_model(self, filename, weight=0.3, batch_size=2500):
+        """
+        Train the model.
+        """
+        sample_weights = {}
+        for key in self.train_keys:
+            sample_weights[key] = weight
+        self.model.model.accumulate_gram_from_file(filename, self.train_keys, sample_weights=sample_weights, batch_size=batch_size, energy_key="energy", progress='bar')
+    def train_model_multiple_files(self, filenames, weight=0.3, batch_size=2500):
+        """
+        Train the model using multiple files.
+        """
+        self.model.fit_from_files(filenames, self.train_keys, weight=weight, batch_size=batch_size, energy_key='energy', progress='bar')
+    def finalize_fit(self, weight=0.3):
+        self.model.finalize_fit_from_accumulator(weight=weight)
+    def export_model(self, filename):
+        """
+        Export the model to a file.
+
+        :param filename: Name of the file.
+        """
+        self.model.to_json(filename)
+        print(f'Model has been exported to {filename}')
+    def import_model(self, filename):
+        """
+        Import the model from a file.
+
+        :param filename: Name of the file.
+        """
+        self.model = least_squares.WeightedLinearModel.from_json(filename)
+        print(f'Model has been imported from {filename}')
+    def get_model(self):
+        """
+        Get the model.
+
+        :return: Model object.
+        """
+        return self.model        
 class ModelAnalyzer:
     def __init__(self, chemical_system, model, bspline_config, training_data, testing_data, feature_filenames, r_cut = 10, bins = 0.01):
         """
@@ -1186,6 +1434,11 @@ class ModelAnalyzer:
             fig.tight_layout()
             ax.set_ylim(0,5) # Set the y-axis limit to 5 
             ax.set_xlim(0,5) # Set the x-axis limit to 5 
+    def fix_repulsion_2b(self, pair, r_target, min_curvature=0.0):
+        """
+        Fix the repulsion for a 2-body interaction.
+        """
+        self.model.fix_repulsion_2b(pair, r_target, min_curvature=min_curvature)
     def analyze_2b(self, element_list, analysis):
         """
         Analyze the 2-body interactions.
@@ -1217,8 +1470,11 @@ class ModelAnalyzer:
         Test the model prediction.
         """
         keys = self.testing_keys if training is False else self.training_keys
-
-        y_e, p_e, y_f, p_f, rmse_e, rmse_f, ids, force_ids = self.model.batched_predict(self.feature_filenames, keys=keys)
+        
+        if(len(self.feature_filenames) > 1):
+            y_e, p_e, y_f, p_f, rmse_e, rmse_f, ids, force_ids = self.model.batched_predict_multiple_files(self.feature_filenames, keys=keys)
+        else:
+            y_e, p_e, y_f, p_f, rmse_e, rmse_f, ids, force_ids = self.model.batched_predict(self.feature_filenames[0], keys=keys)
 
 
         # Store results in a dictionary
@@ -1337,9 +1593,11 @@ class ModelAnalyzer:
     def set_up_folder_structure(self):
         current_directory = os.getcwd()
         validation_folder_path = os.path.join(current_directory, "validation")
+        print("Validation folder path setup:", validation_folder_path)
         if not os.path.exists(validation_folder_path):
             os.makedirs(validation_folder_path)
         structures_folder_path = os.path.join(validation_folder_path, "structures")
+        print("Structures folder path setup:", structures_folder_path)
         if not os.path.exists(structures_folder_path):
             os.makedirs(structures_folder_path)
         else:
@@ -1352,48 +1610,50 @@ class ModelAnalyzer:
                 lammps_folder_path = os.path.join(structure_folder_path, "lammps")
                 if not os.path.exists(lammps_folder_path):
                     os.makedirs(lammps_folder_path)
+        print("returning from folder structure setup")
         return validation_folder_path
     def retrieve_model_files(self):
+        print("retrieve model files")
         if self.dft_validation_structures:
             for structure in self.dft_validation_structures:
                 #get the mp id from the structure name (its in format POSCAR_mpid)
+                print("structure: ", structure)
                 mpid = structure
                 directory = os.path.join("validation/structures/", structure)
+                print("directory: ", directory)
                 structure_downloader = StructureDownloader(MP_API_KEY)
+                print("structure downloader object")
                 structure_downloader.download_single_structure(mpid, directory)
+        print("returning from retrieve model files")
                 
-                
-    def validate_potential(self, potential_version, potential_file, element_list):
-        """
-        Validate the potential dynamically using LAMMPS and DFT files 
-        identified from the validation folder structure and file names.
-        """
+    def validate_potential_by_name(self, potential_version, potential_file, element_list, test_name):
         current_directory = os.getcwd()
         datas = []
-        print("printing validation structures")
+        print("Printing validation structures")
+        
         for structure in self.dft_validation_structures:
             print(structure)
-        print("done printing the structures")
+        print("Done printing the structures")
+        
         for structure in self.dft_validation_structures:
             if "POSCAR" in structure:
-                print("contains POSCAR")
+                print("Contains POSCAR")
                 continue
             if "LAMMPS" in structure:
-                print("contains LAMMPS")
+                print("Contains LAMMPS")
                 continue
+            
             # Extract the Materials Project ID from the structure name
-            print("for structure in structure")
-            print(structure)
-    
+            print("Processing structure:", structure)
             structure_id = structure.replace("mp-", "")
-
+            
             # Define paths for LAMMPS and DFT files
             validation_folder_path = os.path.join(current_directory, "validation/structures", structure)
-            print("validation folder path")
-            print(validation_folder_path)
+            print("Validation folder path:", validation_folder_path)
+            
             lammps_file = os.path.join(validation_folder_path, f"LAMMPS_{structure_id}.data")
             dft_file = os.path.join(validation_folder_path, f"POSCAR_{structure_id}")
-
+            
             # Validate that the files exist
             if not os.path.isfile(lammps_file):
                 print(f"LAMMPS file not found for structure {structure_id}: {lammps_file}")
@@ -1401,15 +1661,100 @@ class ModelAnalyzer:
             if not os.path.isfile(dft_file):
                 print(f"DFT file not found for structure {structure_id}: {dft_file}")
                 continue
+            
+            # Create the element list as a space-separated string
+            element_list_str = " ".join(element_list)
+            print("about to initialize validationData")
+            # Initialize ValidationData
+            data = ValidationData(potential_version, potential_file, structure_id)
+            print("initialized validation data")
+            # Dictionary to map test names to validation classes
+            test_mapping = {
+                "lattice_constant": LatticeConstantValidation,
+                "cohesive_energy": CohesiveEnergyValidation,
+                "elastic_tensor": ElasticTensorValidation,
+                "surface_energy": SurfaceEnergyValidation
+            }
+            print('test mapping: ', test_name)
+            print(test_mapping)
+            if test_name not in test_mapping:
+                print(f"Invalid test name: {test_name}")
+                return None
+            print("licky balls")
+            # Execute the specified test
+            print(f"Running test: {test_mapping[test_name]}")
+            validation_class = test_mapping[test_name]
+            validation_instance = validation_class(potential_file, lammps_file, dft_file, element_list_str, validation_folder_path)
+            print("class initialized")
+            validation_instance.initialize_simulation_files()
+            print("simulation files init")
+            # Map test names to their respective DFT result paths
+            dft_paths = {
+                "lattice_constant": os.path.join(validation_folder_path, "dft/simulations/RelaxationSimulation/"),
+                "cohesive_energy": os.path.join(validation_folder_path, "dft/simulations/CohesiveEnergySimulation/results.txt"),
+                "elastic_tensor": os.path.join(validation_folder_path, "dft/simulations/ElasticTensor/results.txt"),
+                "surface_energy": os.path.join(validation_folder_path, "dft/simulations/SurfaceEnergySimulation/")
+            }
+            print('dft paths')
+            
+            validation_instance.retrieve_dft_result(test_name, test_name, dft_paths[test_name])
+            print('dft result retrieved')
+            percent_error = validation_instance.start_validation(overwrite=True, local=False)
+            print('validation run')
+            data.add_validation(test_name, percent_error)
+            datas.append(data)
+            
+            print(f"Validation data for {test_name}: ", data)
+            
+            # Return to the initial directory after processing each structure
+            os.chdir(current_directory)
 
-            # Add the files to the validation lists
+        return datas
+    
+    def validate_potential(self, potential_version, potential_file, element_list, validations_to_run=None):
+        """
+        Validate the potential dynamically using LAMMPS and DFT files 
+        identified from the validation folder structure and file names.
+
+        Args:
+            potential_version: Version of the potential to validate.
+            potential_file: Path to the potential file.
+            element_list: List of elements involved in the validation.
+            validations_to_run: Dictionary indicating which validations to run (True/False).
+                                e.g., {"lattice_constant": True, "cohesive_energy": False, ...}
+        """
+        print("validate potential entry1")
+        current_directory = os.getcwd()
+        datas = []
+        if validations_to_run is None:
+            validations_to_run = {
+                "lattice_constant": True,
+                "cohesive_energy": True,
+                "elastic_tensor": True,
+                "surface_energy": True
+            }
+        print("validate potential entry2")
+
+        for structure in self.dft_validation_structures:
+            if "POSCAR" in structure or "LAMMPS" in structure:
+                print(f"Skipping structure containing POSCAR or LAMMPS: {structure}")
+                continue
+            print("validate for loop")
+            # Extract the Materials Project ID from the structure name
+            structure_id = structure.replace("mp-", "")
+            validation_folder_path = os.path.join(current_directory, "validation/structures", structure)
+            lammps_file = os.path.join(validation_folder_path, f"LAMMPS_{structure_id}.data")
+            dft_file = os.path.join(validation_folder_path, f"POSCAR_{structure_id}")
+
+            # Validate that the files exist
+            if not os.path.isfile(lammps_file) or not os.path.isfile(dft_file):
+                print(f"Files missing for structure {structure_id}: {lammps_file}, {dft_file}")
+                continue
+
+            # Ensure files are added to the validation lists
             if dft_file not in self.dft_validation_structures:
-                print("appending dft_file")
-                print(dft_file)
                 self.dft_validation_structures.append(dft_file)
             if lammps_file not in self.lammps_validation_structures:
-                print("appending lammps file")
-                print(lammps_file)
                 self.lammps_validation_structures.append(lammps_file)
 
             # Create the element list as a space-separated string
@@ -1417,52 +1762,51 @@ class ModelAnalyzer:
 
             # Initialize ValidationData
             data = ValidationData(potential_version, potential_file, structure_id)
-
+            print("potential validation")
             # Lattice Constant Validation
-            print("lattice constant validation")
-            lattice_constant = LatticeConstantValidation(potential_file, lammps_file, dft_file, element_list_str,validation_folder_path)
-            lattice_constant.initialize_simulation_files()
-            dft_lattice_path = os.path.join(validation_folder_path, "dft/simulations/RelaxationSimulation/")
-            lattice_constant.retrieve_dft_result("lattice_constant", "lattice_constant", dft_lattice_path)
-            lattice_percent_error = lattice_constant.start_validation(overwrite=True, local=False)
-            data.add_validation("lattice_constant", lattice_percent_error)
+            if validations_to_run.get("lattice_constant", False):
+                lattice_constant = LatticeConstantValidation(potential_file, lammps_file, dft_file, element_list_str, validation_folder_path)
+                lattice_constant.initialize_simulation_files()
+                dft_lattice_path = os.path.join(validation_folder_path, "dft/simulations/RelaxationSimulation/")
+                lattice_constant.retrieve_dft_result("lattice_constant", "lattice_constant", dft_lattice_path)
+                lattice_percent_error = lattice_constant.start_validation(overwrite=True, local=False)
+                data.add_validation("lattice_constant", lattice_percent_error)
             os.chdir(current_directory)
-            
-            # Cohesive Energy Validation 
-            # print("cohesive energy validation")
-            # cohesive_energy = CohesiveEnergyValidation(potential_file, lammps_file, dft_file, element_list_str,validation_folder_path)
-            # cohesive_energy.initialize_simulation_files()
-            # dft_cohesive_energy_path = os.path.join(validation_folder_path, "dft/simulations/CohesiveEnergySimulation/results.txt")
-            # cohesive_energy.retrieve_dft_result("cohesive_energy", "cohesive_energy", dft_cohesive_energy_path)
-            # cohesive_energy_percent_error = cohesive_energy.start_validation(overwrite=True, local=False)
-            # data.add_validation("cohesive_energy", cohesive_energy_percent_error)
-            # os.chdir(current_directory)
-
-            # #Elastic Tensor Validation
-            print("Elastic Tensor Validation")
-            tensor = ElasticTensorValidation(potential_file, lammps_file, dft_file, element_list_str,validation_folder_path)
-            tensor.initialize_simulation_files()
-            dft_tensor_path = os.path.join(validation_folder_path, "dft/simulations/ElasticTensor/results.txt")
-            tensor.retrieve_dft_result("elastic_tensor", "elastic_tensor", dft_tensor_path)
-            tensor_percent_error = tensor.start_validation(overwrite=True, local=False)
-            data.add_validation("elastic_tensor", tensor_percent_error)
+            # Cohesive Energy Validation
+            if validations_to_run.get("cohesive_energy", False):
+                cohesive_energy = CohesiveEnergyValidation(potential_file, lammps_file, dft_file, element_list_str, validation_folder_path)
+                cohesive_energy.initialize_simulation_files()
+                dft_cohesive_energy_path = os.path.join(validation_folder_path, "dft/simulations/CohesiveEnergySimulation/results.txt")
+                cohesive_energy.retrieve_dft_result("cohesive_energy", "cohesive_energy", dft_cohesive_energy_path)
+                cohesive_energy_percent_error = cohesive_energy.start_validation(overwrite=True, local=False)
+                data.add_validation("cohesive_energy", cohesive_energy_percent_error)
             os.chdir(current_directory)
-            # Surface Energy Validation 
-            print("surface energy validation")
-            surface_energy = SurfaceEnergyValidation(potential_file, lammps_file, dft_file, element_list_str,validation_folder_path)
-            surface_energy.initialize_simulation_files()
-            dft_surface_energy_path = os.path.join(validation_folder_path, "dft/simulations/SurfaceEnergySimulation/")
-            surface_energy.retrieve_dft_result("surface_energy", "surface_energy", dft_surface_energy_path)
-            surface_energy_percent_error = surface_energy.start_validation(overwrite=True, local=False)
-            data.add_validation("surface_energy", surface_energy_percent_error)
+            # Elastic Tensor Validation
+            if validations_to_run.get("elastic_tensor", False):
+                tensor = ElasticTensorValidation(potential_file, lammps_file, dft_file, element_list_str, validation_folder_path)
+                tensor.initialize_simulation_files()
+                dft_tensor_path = os.path.join(validation_folder_path, "dft/simulations/ElasticTensor/results.txt")
+                tensor.retrieve_dft_result("elastic_tensor", "elastic_tensor", dft_tensor_path)
+                tensor_percent_error = tensor.start_validation(overwrite=True, local=False)
+                data.add_validation("elastic_tensor", tensor_percent_error)
+            os.chdir(current_directory)
+            # Surface Energy Validation
+            if validations_to_run.get("surface_energy", False):
+                surface_energy = SurfaceEnergyValidation(potential_file, lammps_file, dft_file, element_list_str, validation_folder_path)
+                surface_energy.initialize_simulation_files()
+                dft_surface_energy_path = os.path.join(validation_folder_path, "dft/simulations/SurfaceEnergySimulation/")
+                surface_energy.retrieve_dft_result("surface_energy", "surface_energy", dft_surface_energy_path)
+                surface_energy_percent_error = surface_energy.start_validation(overwrite=True, local=False)
+                data.add_validation("surface_energy", surface_energy_percent_error)
             os.chdir(current_directory)
             # Append the validation data
             datas.append(data)
-            print("validation data: ", data)
+            
             # Return to the initial directory after processing each structure
             os.chdir(current_directory)
 
         return datas
+
 
 from datetime import datetime     
 class UF3LammpsPotentialGenerator:

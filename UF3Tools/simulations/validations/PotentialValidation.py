@@ -9,13 +9,21 @@ import ast
 class PotentialValidation:
     def __init__(self, potential_file, lammps_model_file, dft_model_file, element_list, root_directory, use_dft=False):
         #initialize variables
+        print("potentialvalidation init")
         self.potential_file = potential_file
+        print("potential file: ", self.potential_file)
         self.lammps_model_file = lammps_model_file
+        print("lammps model file: ", self.lammps_model_file)
         self.dft_model_file = dft_model_file
+        print("dft model file: ", self.dft_model_file)
         self.element_list = element_list
+        print("element list: ", self.element_list)
         self.use_dft = use_dft
+        print("use dft: ", self.use_dft)
         self.has_dft_data = False
+        
         self.simulation_type = None
+        print("variables set up")
         
         #initialize folder structures
         self.original_directory = os.getcwd()

@@ -121,8 +121,9 @@ class StructureDownloader:
     
     def download_single_structure(self, mpid, directory):
         # Get the structure
+        print(f"Downloading structure for {mpid}")
         structure = self.mpr.get_structure_by_material_id(mpid)
-        
+        print(f"Downloaded structure for {mpid}")
         # Print information about the primitive unit cell
         primitive_analyzer = SpacegroupAnalyzer(structure)
         primitive_structure = primitive_analyzer.get_primitive_standard_structure()
