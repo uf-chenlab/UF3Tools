@@ -93,12 +93,11 @@ class SurfaceEnergyBulkSimulation:
 
             return results
 
-        except FileNotFoundError as e:
-            print(f"Error: {e.filename} not found.")
-            return None
-        except Exception as e:
-            print(f"An error occurred while reading the results: {e}")
-            return None
+        except:
+            return {
+                'energy': 999999,
+                'area': 1
+            }
         
 
 class SurfaceEnergyFreeSimulation:
@@ -190,12 +189,11 @@ class SurfaceEnergyFreeSimulation:
 
             return results
 
-        except FileNotFoundError as e:
-            print(f"Error: {e.filename} not found.")
-            return None
-        except Exception as e:
-            print(f"An error occurred while reading the results: {e}")
-            return None
+        except:
+            return {
+                'energy': 999999,
+                'area': 1
+            }
 
 class SurfaceEnergyRelaxationSimulation:
     def __init__(self, simulation_directory, template_directory, **kwargs):

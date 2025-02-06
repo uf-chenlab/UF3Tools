@@ -71,44 +71,46 @@ class ElasticTensorSimulation:
         shear_modulus1_pattern = re.compile(r"Shear Modulus 1 = ([\d\.\-\+eE]+) GPa")
         shear_modulus2_pattern = re.compile(r"Shear Modulus 2 = ([\d\.\-\+eE]+) GPa")
         poisson_ratio_pattern = re.compile(r"Poisson Ratio = ([\d\.\-\+eE]+)")
-        
-        with open(file_path, "r") as file:
-            lines = file.readlines()
+        try:
+            with open(file_path, "r") as file:
+                lines = file.readlines()
 
-        for line in lines:
-            # Match elastic tensor components
-            elastic_match = elastic_pattern.search(line)
-            if elastic_match:
-                elastic_constant, value = elastic_match.groups()
-                elastic_tensor[elastic_constant] = float(value)
-            
-            # Match bulk modulus
-            bulk_modulus_match = bulk_modulus_pattern.search(line)
-            if bulk_modulus_match:
-                lammps_data["bulk_modulus_voigt"] = float(bulk_modulus_match.group(1))
-            
-            # Match shear moduli
-            shear_modulus1_match = shear_modulus1_pattern.search(line)
-            if shear_modulus1_match:
-                lammps_data["shear_modulus_voigt"] = float(shear_modulus1_match.group(1))
-            
-            shear_modulus2_match = shear_modulus2_pattern.search(line)
-            if shear_modulus2_match:
-                lammps_data["shear_modulus_reuss"] = float(shear_modulus2_match.group(1))
-            
-            # We aren't extracting Poisson ratio for now, but you can include it if needed
-            # poisson_ratio_match = poisson_ratio_pattern.search(line)
+            for line in lines:
+                # Match elastic tensor components
+                elastic_match = elastic_pattern.search(line)
+                if elastic_match:
+                    elastic_constant, value = elastic_match.groups()
+                    elastic_tensor[elastic_constant] = float(value)
+                
+                # Match bulk modulus
+                bulk_modulus_match = bulk_modulus_pattern.search(line)
+                if bulk_modulus_match:
+                    lammps_data["bulk_modulus_voigt"] = float(bulk_modulus_match.group(1))
+                
+                # Match shear moduli
+                shear_modulus1_match = shear_modulus1_pattern.search(line)
+                if shear_modulus1_match:
+                    lammps_data["shear_modulus_voigt"] = float(shear_modulus1_match.group(1))
+                
+                shear_modulus2_match = shear_modulus2_pattern.search(line)
+                if shear_modulus2_match:
+                    lammps_data["shear_modulus_reuss"] = float(shear_modulus2_match.group(1))
+                
+                # We aren't extracting Poisson ratio for now, but you can include it if needed
+                # poisson_ratio_match = poisson_ratio_pattern.search(line)
 
-        # Store the elastic tensor as a dictionary
-        if elastic_tensor:
-            lammps_data["elastic_tensor"] = elastic_tensor
-        
-        # Calculate the Hill averages for bulk modulus and shear modulus if both Voigt and Reuss are available
-        if lammps_data["bulk_modulus_voigt"] and lammps_data["bulk_modulus_reuss"]:
-            lammps_data["bulk_modulus_hill"] = (lammps_data["bulk_modulus_voigt"] + lammps_data["bulk_modulus_reuss"]) / 2
-        
-        if lammps_data["shear_modulus_voigt"] and lammps_data["shear_modulus_reuss"]:
-            lammps_data["shear_modulus_hill"] = (lammps_data["shear_modulus_voigt"] + lammps_data["shear_modulus_reuss"]) / 2
-        
-        return lammps_data
+            # Store the elastic tensor as a dictionary
+            if elastic_tensor:
+                lammps_data["elastic_tensor"] = elastic_tensor
+            
+            # Calculate the Hill averages for bulk modulus and shear modulus if both Voigt and Reuss are available
+            if lammps_data["bulk_modulus_voigt"] and lammps_data["bulk_modulus_reuss"]:
+                lammps_data["bulk_modulus_hill"] = (lammps_data["bulk_modulus_voigt"] + lammps_data["bulk_modulus_reuss"]) / 2
+            
+            if lammps_data["shear_modulus_voigt"] and lammps_data["shear_modulus_reuss"]:
+                lammps_data["shear_modulus_hill"] = (lammps_data["shear_modulus_voigt"] + lammps_data["shear_modulus_reuss"]) / 2
+            
+            return lammps_data
+        except: 
+            return {}
             

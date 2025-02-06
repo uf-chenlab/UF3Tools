@@ -157,6 +157,7 @@ class DataParser:
                                     if data_type.lower() in prefix.lower():
                                         filter = False
                                         break
+                            print("debug data prefix: ", prefix)
                             self.data_coordinator.dataframe_from_trajectory(file, prefix=prefix, filter=filter)
                             parsedFiles += 1
                         except Exception as e:

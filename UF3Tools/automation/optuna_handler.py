@@ -11,7 +11,7 @@ import optuna
 from dask_jobqueue import SLURMCluster
 from dask.distributed import get_worker, WorkerPlugin
 from UF3Tools.common.MPAPIKey import MP_API_KEY
-
+import uuid
 import os
 import shutil
 from datetime import datetime
@@ -61,11 +61,13 @@ def worker_init_once(
     trial_folder = os.path.join(base_dir, "optuna_trials", f"worker_{worker_id}")
     os.makedirs(trial_folder, exist_ok=True)
     print("init once trial folder ")
+
     # If we need to copy a "validation_base" folder or something:
     validation_src = os.path.join(base_dir, "validation_base")
     if os.path.exists(validation_src):
         validation_dst = os.path.join(trial_folder, "validation", "structures")
-        shutil.copytree(validation_src, validation_dst, dirs_exist_ok=True)
+        if not os.path.exists(validation_dst):
+            shutil.copytree(validation_src, validation_dst, dirs_exist_ok=True)
     # Switch to the trial_folder so all output goes there
     print("init once validation folder")
     old_cwd = os.getcwd()
@@ -181,12 +183,12 @@ def parse_validation_data(validation_data, acceptable_errors):
                 avg_result[key] = avg_result.get(key, 0) + value / num_results
     else:
         print("no validation results")
-        return 999999
+        return 999
     
     final_loss = loss_function(avg_result, acceptable_errors)
     print("Final Loss:", final_loss)
     if(final_loss <= 0.1):
-        return 999999
+        return 999
     else:
         return final_loss
 def train_with_preloaded_data(params, settings, trial_id=0):
@@ -206,11 +208,17 @@ def train_with_preloaded_data(params, settings, trial_id=0):
         raise RuntimeError("No automater loaded on this worker! Did you run worker_init_once?")
 
     (ridge_1b, ridge_2b, ridge_3b, curvature_2b, curvature_3b, weight) = params
-    job_label = (
+    potential_label = (
         f"trial_{trial_id}_r1b_{ridge_1b}_r2b_{ridge_2b}_r3b_{ridge_3b}_"
         f"curv2b_{curvature_2b}_curv3b_{curvature_3b}_w_{weight}"
     )
-
+    unique_id = str(uuid.uuid4())[:32]
+    if settings.get('optimize_sample_weights', False):
+        weight_str = "_".join([f"{k}_{v:.2f}" for k, v in settings['sample_weights'].items()])
+        potential_label += f"_sw_{weight_str}"
+    potential_label = f'{unique_id}_{potential_label}'
+    model_filename = unique_id
+    print("potential label: ", potential_label)
     # Prepare the regularizer
     regularizer = {
         "ridge_1b": ridge_1b,
@@ -223,7 +231,7 @@ def train_with_preloaded_data(params, settings, trial_id=0):
     try:
         # Train the model in parallel with some # of cores (optional)
         chemical_system, trainer_model, bspline_config, features, _ = automater.train_model_parallel(
-            model_filename=job_label,
+            model_filename=model_filename,
             training_data=automater.get_training_set(),
             testing_data=automater.get_testing_set(),
             regularizer=regularizer,
@@ -234,7 +242,7 @@ def train_with_preloaded_data(params, settings, trial_id=0):
         )
     except Exception as exc:
         return None, f"Training failed: {exc}"
-
+    
     # Validation
     frame_name, feature_name = settings['parity_data']
     automater.set_parity_data(frame_name, feature_name)
@@ -259,11 +267,13 @@ def train_with_preloaded_data(params, settings, trial_id=0):
     analyzer.set_dft_validation_structures(filtered)
     analyzer.set_lammps_validation_structures(filtered)
     analyzer.set_up_folder_structure()
-    analyzer.fix_repulsion_2b(pair=('Al', 'Al'), r_target=0.25, min_curvature=50.0)
+    if 'al' in settings['chemical_formula'].lower():
+        analyzer.fix_repulsion_2b(pair=('Al', 'Al'), r_target=0.25, min_curvature=50.0)
+
     print("analyzer")
     analyzer.export_model_to_lammps(
         os.getcwd(), 
-        job_label, 
+        model_filename, 
         True, 
         "ntaormina", 
         "metal", 
@@ -273,13 +283,13 @@ def train_with_preloaded_data(params, settings, trial_id=0):
 
     try:
         print("lick my balls")
-        validation_data = analyzer.validate_potential(job_label, job_label, settings['element_list'])
+        validation_data = analyzer.validate_potential(potential_label, model_filename, settings['element_list'])
         print("potential validated")
     except Exception as e:
         return {"status": "failed", "error": f"Validation error: {str(e)}"}
 
     # Save validation data
-    automater.store_validation_data_alternate_dir(job_label, validation_data, os.getcwd())
+    automater.store_validation_data_alternate_dir(model_filename, validation_data, os.getcwd())
     print("validation data stored")
     return validation_data
 
@@ -297,9 +307,15 @@ def objective(trial, client, settings):
     ridge_3b     = trial.suggest_float("ridge_3b", 1e-9, 1e-1, log=True)
     curvature_2b = trial.suggest_float("curvature_2b", 1e-9, 1e-1, log=True)
     curvature_3b = trial.suggest_float("curvature_3b", 1e-9, 1e-1, log=True)
-    weight       = trial.suggest_float("weight",    0.1, 1.0,  log=False)
+    weight       = trial.suggest_float("weight",    0.01, 1.0,  log=False)
 
     params = (ridge_1b, ridge_2b, ridge_3b, curvature_2b, curvature_3b, weight)
+    
+    if(settings['optimize_sample_weights'] == True):
+        sample_weights = {}
+        for key in settings["sample_weights_to_optimize"]:
+            sample_weights[key] = trial.suggest_float(f"sample_weights_{key}", 0.01, 5.0, log=True)
+        settings['sample_weights'].update(sample_weights)
 
     # Submit the training/validation to a worker
     future = client.submit(
@@ -328,135 +344,6 @@ def objective(trial, client, settings):
     loss = parse_validation_data(validation_data, settings['acceptable_errors'])
 
     return loss
-
-
-
-
-
-
-
-
-def train_param_combo(trial, settings, cores):
-    """
-    This function is called ONCE per trial. It fetches Automater from the worker.
-    """
-    worker = get_worker()
-    automater = worker.automater  # Get pre-initialized Automater
-    worker_folder = worker.worker_folder
-
-    # Get unique worker ID
-    worker_id = worker.id
-
-    # Generate unique model label
-    ridge_1b = trial.suggest_loguniform("ridge_1b", 1e-9, 1e-1)
-    ridge_2b = trial.suggest_loguniform("ridge_2b", 1e-9, 1e-1)
-    ridge_3b = trial.suggest_loguniform("ridge_3b", 1e-9, 1e-1)
-    curvature_2b = trial.suggest_loguniform("curvature_2b", 1e-9, 1e-1)
-    curvature_3b = trial.suggest_loguniform("curvature_3b", 1e-9, 1e-1)
-    weight = trial.suggest_uniform("weight", 0.1, 1.0)
-
-    regularizer = {
-        "ridge_1b": ridge_1b,
-        "ridge_2b": ridge_2b,
-        "ridge_3b": ridge_3b,
-        "curvature_2b": curvature_2b,
-        "curvature_3b": curvature_3b
-    }
-
-    job_label = f"worker_{worker_id}_trial_{trial.number}"
-    model_filename = os.path.join(worker_folder, job_label)
-
-    print(f"[Worker {worker_id}] Starting {job_label} ...")
-
-    # Train Model
-    try:
-        chemical_system, trainer_model, bspline_config, features, _ = automater.train_model_parallel(
-            model_filename, 
-            automater.get_training_set(), 
-            automater.get_testing_set(),
-            regularizer=regularizer, 
-            weight=weight, 
-            batch_size=settings['batch_size'],
-            num_cores=cores,
-            sample_weights=settings['sample_weights']
-        )
-    except Exception as e:
-        return {"status": "failed", "error": f"Training error: {str(e)}"}
-
-    # Validate Model
-    analyzer = ModelAnalyzer(chemical_system, trainer_model, bspline_config, worker_folder, worker_folder, features[0])
-    analyzer.set_dft_validation_structures(settings['testing_mp_structures'])
-    analyzer.set_lammps_validation_structures(settings['testing_mp_structures'])
-    analyzer.set_up_folder_structure()
-    analyzer.export_model_to_lammps(worker_folder, model_filename, True, "ntaormina", "metal", "nk")
-
-    try:
-        validation_data = analyzer.validate_potential(model_filename, model_filename, settings['element_list'])
-    except Exception as e:
-        return {"status": "failed", "error": f"Validation error: {str(e)}"}
-
-    # Compute objective loss
-    loss = objective(validation_data, settings['acceptable_errors'])
-
-    # Save validation data
-    automater.store_validation_data_alternate_dir(model_filename, validation_data, worker_folder)
-
-    return loss
-
-def run_optuna_with_dask_slurm(automater, num_workers=8, n_trials=100, job_params=None, automater_params=None, sample_weights=None):
-    """
-    Uses Optuna with Dask to distribute hyperparameter search across SLURM workers.
-    """
-    chemical_system = automater.get_chemical_system()
-    maps = automater.get_maps()
-    element_list = automater.get_element_list()
-    base_directory = os.getcwd()
-    degree = automater.get_degree()
-    settings = {
-        'element_list': element_list,
-        'chemical_system': chemical_system,
-        'maps': maps,
-        'base_directory': base_directory,
-        'degree': degree,
-        'batch_size': 1000,
-        'ignore_list': automater.get_ignore_list(),
-        'sample_weights': sample_weights,
-    }
-    settings.update(automater_params)
-    settings.update(job_params)
-    # Setup SLURM cluster
-    cluster = SLURMCluster(
-        account=job_params['account'],
-        cores=job_params['cores_per_job'],
-        processes=1,  
-        memory=job_params['memory'],
-        walltime=job_params['walltime'],
-        job_extra=job_params['extra'],
-        log_directory=os.getcwd(),
-    )
-
-    cluster.scale(num_workers)
-    client = Client(cluster)
-
-    # Register Automater Plugin (ensures each worker gets its own Automater instance)
-    automater_plugin = AutomaterWorkerPlugin(automater_params)
-    client.register_worker_plugin(automater_plugin, name="automater_plugin")
-
-    # Setup Optuna Study
-    study = optuna.create_study(
-        direction="minimize",
-        study_name="uf3_hyperparam_search",
-        storage="sqlite:///optuna_study.db",
-        load_if_exists=True
-    )
-    
-    # Run trials in parallel using Dask workers
-    study.optimize(lambda trial: train_param_combo(trial, settings=settings, cores=job_params['cores_per_job']), 
-                   n_trials=n_trials, n_jobs=num_workers)
-
-    print("Best hyperparameters:", study.best_params)
-    client.close()
-    cluster.close()
 
 
 def run_optuna_with_dask_hpc(
@@ -513,9 +400,16 @@ def run_optuna_with_dask_hpc(
         print("[INFO] Data successfully initialized on workers:", init_future)
 
     # 4) Create your Optuna study
+    sampler = optuna.samplers.TPESampler(multivariate=True, 
+                                         group=True,
+                                         n_startup_trials=100,
+                                         seed=uuid.uuid4())
     study = optuna.create_study(
+        sampler=sampler,
         study_name="UF3_Distributed_Optuna",
-        direction="minimize"
+        direction="minimize",
+        
+        
     )
 
     # 5) Launch optimization
@@ -533,8 +427,34 @@ def run_optuna_with_dask_hpc(
     client.close()
     cluster.close()
     
+    # copy results
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     backup_folder = os.path.join(base_directory, "grid_search_results", timestamp)
     os.makedirs(backup_folder, exist_ok=True)
-    for worker_folder in os.listdir(os.path.join(base_directory, "optuna_trials")):
-        shutil.move(os.path.join(base_directory, "optuna_trials", worker_folder), backup_folder)
+    optuna_trials_path = os.path.join(base_directory, "optuna_trials")
+    for worker_folder in os.listdir(optuna_trials_path):
+        source_path = os.path.join(optuna_trials_path, worker_folder)
+        # delete the validation folder
+        for root, dirs, files in os.walk(source_path, topdown=True):
+            for directory in dirs:
+                if "validation" in directory:
+                    validation_path = os.path.join(root, directory)
+                    shutil.rmtree(validation_path)  # Delete the validation folder
+                    print(f"Deleted validation folder: {validation_path}")
+        #move the worker folder to results folder
+        shutil.move(source_path, backup_folder)
+        print(f"Moved: {worker_folder} -> {backup_folder}")
+        
+    #clear dask worker logs 
+    current_directory = os.getcwd()
+
+    for filename in os.listdir(current_directory):
+        if "dask-worker" in filename: 
+            file_path = os.path.join(current_directory, filename)
+            try:
+                os.remove(file_path)
+                print(f"Deleted: {file_path}")
+            except Exception as e:
+                print(f"Error deleting {file_path}: {e}")
+
+    print("Deletion process completed.")

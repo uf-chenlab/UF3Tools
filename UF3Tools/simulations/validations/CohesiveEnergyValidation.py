@@ -52,7 +52,9 @@ class CohesiveEnergyValidation(PotentialValidation):
 
         # If results are missing, throw an error
         else:
-            raise ValueError("LAMMPS or DFT results are missing.")
+            return {
+                'cohesive_energy': 99999999
+            }
 
 
     

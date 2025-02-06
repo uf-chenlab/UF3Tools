@@ -35,7 +35,12 @@ class SurfaceEnergyValidation(PotentialValidation):
         """
         if(self.lammps_results == []):
             self.lammps_results = self.lammps_manager.start_simulation(overwrite=overwrite, local=local)
-
+        if(self.lammps_results == {} or self.lammps_results == []):
+            return {
+                'bulk_energy': 9999999,
+                'surface_energy': 9999999,
+                'free_energy': 999999  
+            }
         percent_error = {}
         if isinstance(self.lammps_results, list):
             self.lammps_results = self.lammps_results[0]

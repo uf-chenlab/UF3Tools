@@ -86,5 +86,8 @@ class LammpsSimulationManager(SimulationManager):
         
     def retrieve_results(self):
         os.chdir(self.simulation_dir)
-        results = self.simulation.process_simulation_results()
+        try:
+            results = self.simulation.process_simulation_results()
+        except:
+            results = {}
         return results

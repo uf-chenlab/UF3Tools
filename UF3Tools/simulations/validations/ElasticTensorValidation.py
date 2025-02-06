@@ -99,7 +99,24 @@ class ElasticTensorValidation(PotentialValidation):
 
         # If results are missing, throw an error
         else:
-            raise ValueError("LAMMPS or DFT results are missing.")
+            print("missing elastic tensor results")
+            return {
+                "C11all": 999999,
+                "C12all": 999999,
+                "C13all": 999999,
+                "C22all": 999999,
+                "C23all": 999999,
+                "C33all": 999999,
+                "C44all": 999999,
+                "C55all": 999999,
+                "C66all": 999999,
+                "bulk_modulus_voigt": 999999,
+                "bulk_modulus_reuss": 999999,
+                "bulk_modulus_hill": 999999,
+                "shear_modulus_voigt":999999,
+                "shear_modulus_reuss":999999,
+                "shear_modulus_hill":999999
+            }
 
 
     

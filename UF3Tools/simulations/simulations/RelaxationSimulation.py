@@ -67,23 +67,33 @@ class RelaxationSimulation:
 
         # Read the contents of the lattice.txt file
         lattice_file_path = "lattice.txt"
-        with open(lattice_file_path, "r") as file:
-            lattice_text = file.read()
+        try:
+            with open(lattice_file_path, "r") as file:
+                lattice_text = file.read()
 
-        # Extract the lattice parameters using a regular expression
-        pattern = r'a:\s*([\d.]+)\s*b:\s*([\d.]+)\s*c:\s*([\d.]+)\s*alpha:\s*([\d.]+)\s*beta:\s*([\d.]+)\s*gamma:\s*([\d.]+)'
-        match = re.search(pattern, lattice_text)
+            # Extract the lattice parameters using a regular expression
+            pattern = r'a:\s*([\d.]+)\s*b:\s*([\d.]+)\s*c:\s*([\d.]+)\s*alpha:\s*([\d.]+)\s*beta:\s*([\d.]+)\s*gamma:\s*([\d.]+)'
+            match = re.search(pattern, lattice_text)
 
-        if match:
-            lattice_parameters['a'] = float(match.group(1))
-            lattice_parameters['b'] = float(match.group(2))
-            lattice_parameters['c'] = float(match.group(3))
-            lattice_parameters['alpha'] = float(match.group(4))
-            lattice_parameters['beta'] = float(match.group(5))
-            lattice_parameters['gamma'] = float(match.group(6))
-            self.lattice_parameters = lattice_parameters
-        else:
-            print("Error: Lattice parameters could not be extracted. Please check the format of lattice.txt.")
+            if match:
+                lattice_parameters['a'] = float(match.group(1))
+                lattice_parameters['b'] = float(match.group(2))
+                lattice_parameters['c'] = float(match.group(3))
+                lattice_parameters['alpha'] = float(match.group(4))
+                lattice_parameters['beta'] = float(match.group(5))
+                lattice_parameters['gamma'] = float(match.group(6))
+                self.lattice_parameters = lattice_parameters
+            else:
+                print("Error: Lattice parameters could not be extracted. Please check the format of lattice.txt.")
+        except:
+            return{
+                'a': 999,
+                'b': 999,
+                'c': 999,
+                'alpha': 999,
+                'beta': 999,
+                'gamma': 999
+            }
 
         return lattice_parameters
     

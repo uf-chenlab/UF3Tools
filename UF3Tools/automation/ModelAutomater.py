@@ -186,7 +186,7 @@ class ModelAutomater:
                 
     def load_new_base_data(self, filter=True):
         for directory in self.directories:
-            data_parser = DataParser([directory], self.data_coordinator)
+            data_parser = DataParser([directory], io.DataCoordinator())
             data_parser.parse_directories(output=True, filter=filter)
             
             # Generate initial filename from the directory name
@@ -215,7 +215,7 @@ class ModelAutomater:
             raise ValueError("The number of names must match the number of directories.")
         dir = os.getcwd()
         for directory, name in zip(self.directories, names):
-            data_parser = DataParser([directory], self.data_coordinator)
+            data_parser = DataParser([directory], io.DataCoordinator())
             data_parser.parse_directories(output=True, filter=filter)
             frame = data_parser.get_data()
             print(f'Loaded data from {directory} with {len(frame)} entries.')
@@ -233,7 +233,7 @@ class ModelAutomater:
             # Export to pickle with the resolved filename
             data_parser.export_to_pickle(self.pickle_directory + filename + '.pkl')
         os.chdir(dir)
-        self.load_existing_base_data()
+        self.load_specific_existing_base_data( names)
         os.chdir(dir)
     def load_specific_existing_base_data(self, names):
         """
@@ -538,21 +538,32 @@ class ModelAutomater:
 
     def fill_sample_weights(self, sample_weights):
         sample_weights_final = {}
-        if sample_weights is not None:
-            for key in sample_weights:
-                weight = sample_weights[key]
-                key_filtered = key + '_filtered.pkl'
-                
+
+        # Ensure sample_weights is a dictionary, or default to an empty dictionary
+        if sample_weights is None:
+            sample_weights = {}
+
+        for key in self.filtered_data_frames.keys():  # Iterate based on existing filtered data
+            key_original = key.replace('_filtered.pkl', '')  # Get original key name
+            weight = sample_weights.get(key_original, 1.0)  # Default to 1.0 if missing
+            
+            try:
                 # Check if the key exists in filtered_data_frames
-                if key_filtered not in self.filtered_data_frames:
-                    print(f"Warning: Key '{key_filtered}' not found in filtered_data_frames. Skipping...")
+                if key not in self.filtered_data_frames:
+                    print(f"Warning: Key '{key}' not found in filtered_data_frames. Skipping...")
                     continue
                 
-                indices = self.filtered_data_frames[key_filtered].index  
+                indices = self.filtered_data_frames[key].index  # Extract indices
+                
+                # Assign weight to each index
                 for index in indices:
                     sample_weights_final[index] = weight
 
+            except Exception as e:
+                print(f"Error processing key '{key}': {e}")
+
         return sample_weights_final
+
 
        
     def train_model(self, model_filename, training_data, testing_data, regularizer, weight=0.3, sample_weights=None, batch_size=500):
