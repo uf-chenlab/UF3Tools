@@ -117,25 +117,25 @@ def loss_function(avg_result, acceptable_errors):
     
     # Normalize errors by acceptable thresholds
     norm_cohesive = abs(cohesive_energy) / acceptable_errors['cohesive_energy']
-    norm_elastic = abs(avg_elastic_constant) / acceptable_errors['elastic_constants']
-    norm_bulk = abs(bulk_modulus) / acceptable_errors['bulk_modulus']
-    norm_shear = abs(shear_modulus) / acceptable_errors['shear_modulus']
-    norm_lattice = abs(lattice_constants) / acceptable_errors['lattice_constants']
+    norm_elastic  = abs(avg_elastic_constant) / acceptable_errors['elastic_constants']
+    norm_bulk     = abs(bulk_modulus) / acceptable_errors['bulk_modulus']
+    norm_shear    = abs(shear_modulus) / acceptable_errors['shear_modulus']
+    norm_lattice  = abs(lattice_constants) / acceptable_errors['lattice_constants']
     
     # Weights (adjustable for importance)
     weight_cohesive = 5.0
-    weight_elastic = 3.0
-    weight_bulk = 2.0
-    weight_shear = 2.0
-    weight_lattice = 1.0
+    weight_elastic  = 3.0
+    weight_bulk     = 2.0
+    weight_shear    = 2.0
+    weight_lattice  = 1.0
     
     # Calculate loss with normalized errors
     loss = (
         weight_cohesive * norm_cohesive +
-        weight_elastic * norm_elastic +
-        weight_bulk * norm_bulk +
-        weight_shear * norm_shear +
-        weight_lattice * norm_lattice
+        weight_elastic  * norm_elastic  +
+        weight_bulk     * norm_bulk     +
+        weight_shear    * norm_shear    +
+        weight_lattice  * norm_lattice
     )
     return loss
 def parse_validation_data(validation_data, acceptable_errors):
@@ -163,9 +163,9 @@ def parse_validation_data(validation_data, acceptable_errors):
                         else:
                             print("its not a dictionary bud")  # Handle non-dictionary list items
                 else:
-                    # Handle case where validation_results is a single dictionary
+                    # Single dictionary
                     for key, value in validation_results.items():
-                        if isinstance(value, (int, float)):  # Check if the value is numeric
+                        if isinstance(value, (int, float)): 
                             result[key] = result.get(key, 0) + value
         else: 
             print("validation data list is broken")
@@ -173,10 +173,8 @@ def parse_validation_data(validation_data, acceptable_errors):
         
         all_results.append(result)
     
-    # Compute the average for each metric
     avg_result = {}
     num_results = len(all_results)
-    
     if num_results > 0:
         for res in all_results:
             for key, value in res.items():
@@ -191,6 +189,7 @@ def parse_validation_data(validation_data, acceptable_errors):
         return 999
     else:
         return final_loss
+
 def train_with_preloaded_data(params, settings, trial_id=0):
     """
     Trains + validates the UF3 model using the data
@@ -218,8 +217,8 @@ def train_with_preloaded_data(params, settings, trial_id=0):
         potential_label += f"_sw_{weight_str}"
     potential_label = f'{unique_id}_{potential_label}'
     model_filename = unique_id
-    print("potential label: ", potential_label)
-    # Prepare the regularizer
+    print(f"[Worker {worker_id}] potential label: {potential_label}")
+
     regularizer = {
         "ridge_1b": ridge_1b,
         "ridge_2b": ridge_2b,
@@ -229,7 +228,6 @@ def train_with_preloaded_data(params, settings, trial_id=0):
     }
 
     try:
-        # Train the model in parallel with some # of cores (optional)
         chemical_system, trainer_model, bspline_config, features, _ = automater.train_model_parallel(
             model_filename=model_filename,
             training_data=automater.get_training_set(),
@@ -250,22 +248,15 @@ def train_with_preloaded_data(params, settings, trial_id=0):
     frame, feature = automater.get_parity_data()
 
     analyzer = ModelAnalyzer(
-        chemical_system, 
-        trainer_model, 
-        bspline_config, 
+        chemical_system,
+        trainer_model,
+        bspline_config,
         automater.get_training_set(),
         automater.get_testing_set(),
         features
     )
-
-    downloader = StructureDownloader(MP_API_KEY)
-    all_materials = downloader.get_structure_list(settings['chemical_formula'])
-    filtered = [
-        m for m in all_materials 
-        if m.split(":")[0] in settings['testing_mp_structures']
-    ]
-    analyzer.set_dft_validation_structures(filtered)
-    analyzer.set_lammps_validation_structures(filtered)
+    analyzer.set_dft_validation_structures(automater.get_dft_validation_structures())
+    analyzer.set_lammps_validation_structures(automater.get_lammps_validation_structures())
     analyzer.set_up_folder_structure()
     if 'al' in settings['chemical_formula'].lower():
         analyzer.fix_repulsion_2b(pair=('Al', 'Al'), r_target=0.25, min_curvature=50.0)
@@ -295,23 +286,16 @@ def train_with_preloaded_data(params, settings, trial_id=0):
 
 
 def objective(trial, client, settings):
-    """
-    Optuna objective that:
-      1) Samples hyperparams
-      2) Submits them to a Dask worker
-      3) Retrieves the result (RMSE)
-    """
-    # Pick hyperparams
+    # Sample hyperparams
     ridge_1b     = trial.suggest_float("ridge_1b", 1e-9, 1e-1, log=True)
     ridge_2b     = trial.suggest_float("ridge_2b", 1e-9, 1e-1, log=True)
     ridge_3b     = trial.suggest_float("ridge_3b", 1e-9, 1e-1, log=True)
     curvature_2b = trial.suggest_float("curvature_2b", 1e-9, 1e-1, log=True)
     curvature_3b = trial.suggest_float("curvature_3b", 1e-9, 1e-1, log=True)
-    weight       = trial.suggest_float("weight",    0.01, 1.0,  log=False)
+    weight       = trial.suggest_float("weight", 0.01, 1.0, log=False)
 
     params = (ridge_1b, ridge_2b, ridge_3b, curvature_2b, curvature_3b, weight)
-    
-    if(settings['optimize_sample_weights'] == True):
+    if settings.get('optimize_sample_weights', False):
         sample_weights = {}
         for key in settings["sample_weights_to_optimize"]:
             sample_weights[key] = trial.suggest_float(f"sample_weights_{key}", 0.01, 5.0, log=True)
@@ -319,10 +303,10 @@ def objective(trial, client, settings):
 
     # Submit the training/validation to a worker
     future = client.submit(
-        train_with_preloaded_data, 
+        train_with_preloaded_data,
         params,
         settings,
-        trial_id=trial.number,  # for labeling
+        trial_id=trial.number,
         pure=False
     )
     
@@ -385,7 +369,7 @@ def run_optuna_with_dask_hpc(
     # 3) Initialize data on each worker once
     init_future = client.run(
         worker_init_once,
-        settings['base_directory'],
+        settings["base_directory"],
         automater.get_element_list(),
         automater.get_chemical_system(),
         automater.get_maps(),
@@ -395,66 +379,60 @@ def run_optuna_with_dask_hpc(
     )
     # .run() returns a dict {worker_address: return_value}
     if not init_future or any(val is None for val in init_future.values()):
-        raise RuntimeError("Worker data initialization failed! Some workers may not have loaded data.")
-    else:
-        print("[INFO] Data successfully initialized on workers:", init_future)
+        raise RuntimeError("Worker data initialization failed on at least one worker.")
 
-    # 4) Create your Optuna study
-    sampler = optuna.samplers.TPESampler(multivariate=True, 
-                                         group=True,
-                                         n_startup_trials=100,
-                                         seed=uuid.uuid4())
+    print("[INFO] Data successfully initialized on workers:", init_future)
+
+    # 4) Set up Optuna
+    sampler = optuna.samplers.TPESampler(
+        multivariate=True,
+        group=True,
+        n_startup_trials=500
+    )
     study = optuna.create_study(
         sampler=sampler,
         study_name="UF3_Distributed_Optuna",
         direction="minimize",
-        
-        
     )
 
-    # 5) Launch optimization
+    # 5) Optimize
     study.optimize(
         lambda trial: objective(trial, client, settings),
         n_trials=n_trials,
         n_jobs=n_workers
     )
 
-    # 6) Results
     print("Study best value =", study.best_value)
     print("Study best params=", study.best_params)
 
-    # 7) Cleanup
+    # 6) Cleanup
     client.close()
     cluster.close()
-    
-    # copy results
+
+    # 7) Post-processing or archiving any results/logs...
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     backup_folder = os.path.join(base_directory, "grid_search_results", timestamp)
     os.makedirs(backup_folder, exist_ok=True)
     optuna_trials_path = os.path.join(base_directory, "optuna_trials")
-    for worker_folder in os.listdir(optuna_trials_path):
-        source_path = os.path.join(optuna_trials_path, worker_folder)
-        # delete the validation folder
-        for root, dirs, files in os.walk(source_path, topdown=True):
-            for directory in dirs:
-                if "validation" in directory:
-                    validation_path = os.path.join(root, directory)
-                    shutil.rmtree(validation_path)  # Delete the validation folder
-                    print(f"Deleted validation folder: {validation_path}")
-        #move the worker folder to results folder
-        shutil.move(source_path, backup_folder)
-        print(f"Moved: {worker_folder} -> {backup_folder}")
-        
-    #clear dask worker logs 
-    current_directory = os.getcwd()
 
-    for filename in os.listdir(current_directory):
-        if "dask-worker" in filename: 
-            file_path = os.path.join(current_directory, filename)
-            try:
-                os.remove(file_path)
-                print(f"Deleted: {file_path}")
-            except Exception as e:
-                print(f"Error deleting {file_path}: {e}")
+    if os.path.exists(optuna_trials_path):
+        for worker_folder in os.listdir(optuna_trials_path):
+            source_path = os.path.join(optuna_trials_path, worker_folder)
+            if not os.path.isdir(source_path):
+                continue
+            # Example: removing subfolder(s) named "validation"
+            for root, dirs, files in os.walk(source_path, topdown=True):
+                for directory in dirs:
+                    if "validation" in directory:
+                        validation_path = os.path.join(root, directory)
+                        shutil.rmtree(validation_path, ignore_errors=True)
+                        print(f"Deleted validation folder: {validation_path}")
+            # Move the entire worker folder
+            shutil.move(source_path, backup_folder)
+            print(f"Moved: {worker_folder} -> {backup_folder}")
 
-    print("Deletion process completed.")
+    # (Optional) Clear old logs, if desired:
+    # for filename in os.listdir(base_directory):
+    #     if "dask-worker" in filename: 
+    #         ...
+    print("All done.")
