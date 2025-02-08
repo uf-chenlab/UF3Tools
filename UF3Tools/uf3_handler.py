@@ -32,6 +32,7 @@ from UF3Tools.simulations.validations.SurfaceEnergyValidation import SurfaceEner
 from UF3Tools.simulations.validations.CohesiveEnergyValidation import CohesiveEnergyValidation
 from UF3Tools.common.MPAPIKey import MP_API_KEY
 from UF3Tools.common.StructureDownloader import StructureDownloader
+from UF3Tools.common.LAMMPSModifier import LAMMPSModifier
 class UF3FileHandler:
     def __init__(self, path):
         self.path = path
@@ -533,19 +534,20 @@ class StructureParser:
         :return: List of unique indices.
         """
         return self.data.index.to_series().apply(lambda x: '_'.join(x.split('_')[:2])).unique()
-    def transform_data(self, data, epa_filter = [-10, 999999]):
+    def transform_data(self, data, epa_filter = [-15, 0], phase_diagram=True):
         #self.data['composition'] = self.data.apply(self.create_comp,axis=1)
         self.append_energy_per_atom()
         self.filter_epa(epa_filter)
-        pde_entries = self.get_pde_entries(self.data)
-        self.cpd = PhaseDiagram(pde_entries)
-        self.append_phase_diagram_energy()
-        self.append_energy_above_hull()
+        if(phase_diagram == True):
+            pde_entries = self.get_pde_entries(self.data)
+            self.cpd = PhaseDiagram(pde_entries)
+            self.append_phase_diagram_energy()
+            self.append_energy_above_hull()
         
-        element_list = self.get_element_list()
-        print(f"Elements in phase diagram: {element_list}")
-        for element in element_list:
-            self.append_element_fraction(element)
+            element_list = self.get_element_list()
+            print(f"Elements in phase diagram: {element_list}")
+            for element in element_list:
+                self.append_element_fraction(element)
             
         return self.data
     def filter_epa(self, epa_filter):
@@ -1763,6 +1765,9 @@ class ModelAnalyzer:
 
             # Initialize ValidationData
             data = ValidationData(potential_version, potential_file, structure_id)
+            lammps_file_ori = lammps_file
+            modifier = LAMMPSModifier(lammps_file)
+            lammps_file_big = modifier.generate_supercell((15,15,15))
             print("potential validation")
             # Lattice Constant Validation
             if validations_to_run.get("lattice_constant", False):
@@ -1793,7 +1798,7 @@ class ModelAnalyzer:
             os.chdir(current_directory)
             # Surface Energy Validation
             if validations_to_run.get("surface_energy", False):
-                surface_energy = SurfaceEnergyValidation(potential_file, lammps_file, dft_file, element_list_str, validation_folder_path)
+                surface_energy = SurfaceEnergyValidation(potential_file, lammps_file_big, dft_file, element_list_str, validation_folder_path)
                 surface_energy.initialize_simulation_files()
                 dft_surface_energy_path = os.path.join(validation_folder_path, "dft/simulations/SurfaceEnergySimulation/")
                 surface_energy.retrieve_dft_result("surface_energy", "surface_energy", dft_surface_energy_path)

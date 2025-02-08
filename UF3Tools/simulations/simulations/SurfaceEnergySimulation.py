@@ -114,7 +114,7 @@ class SurfaceEnergyFreeSimulation:
         self.simulation_directory = simulation_directory
         self.output_file = os.path.join(simulation_directory, "lammps.in")
         self.parameters = {
-            'change_box': 'change_box all z final 0.0 15 units box'
+            'change_box': 'change_box all z final 0.0 30 units box'
         }
         self.parameters.update(kwargs)
         

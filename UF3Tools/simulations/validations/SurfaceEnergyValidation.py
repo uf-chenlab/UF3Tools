@@ -9,8 +9,12 @@ class SurfaceEnergyValidation(PotentialValidation):
         # Update the default keyword arguments with the user-specified arguments
         self.kwargs = self.default_kwargs
         self.kwargs.update(kwargs)
+        lammps_model_file = self.modify_lammps_model_file(lammps_model_file)
         super().__init__(potential_file, lammps_model_file, dft_model_file, element_list,validation_folder_path)
 
+    def modify_lammps_model_file(self, lammps_model_file):
+        original = lammps_model_file
+        
     def initialize_simulation_files(self):
         """
         Initialize the simulation files needed for the potential file.

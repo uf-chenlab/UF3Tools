@@ -60,6 +60,8 @@ class ModelAutomater:
             'increase_points': 'filter_increase_data_points',
             'remove_by_id': 'filter_out_indices',
             'composition_range': 'filter_composition_range',
+            'max_epa': 'filter_max_epa',
+            'min_epa': 'filter_min_epa',
             'gas': 'filter_gas',
             'none': 'get_data'
             # Add new filters here as needed
@@ -106,6 +108,16 @@ class ModelAutomater:
         self.cutoffs = {}
         self.parity_frame = None
         self.parity_feature = None
+        self.dft_validation_structures = None
+        self.lammps_validation_structures = None
+    def set_dft_validation_structures(self, validation_structures):
+        self.dft_validation_structures = validation_structures
+    def get_dft_validation_structures(self):
+        return self.dft_validation_structures
+    def set_lammps_validation_structures(self, validation_structures):
+        self.lammps_validation_structures = validation_structures
+    def get_lammps_validation_structures(self):
+        return self.lammps_validation_structures
     def get_chemical_system(self):
         return self.chemical_system
     def get_maps(self):
@@ -288,11 +300,17 @@ class ModelAutomater:
         return self.base_data_frames
     def get_all_filtered_data(self):
         return self.filtered_data_frames
+    def set_all_filtered_data(self, data):
+        self.filtered_data_frames = data
+        self.filtered_data_labels = data.keys()
+    def get_all_filtered_labels(self):
+        return self.filtered_data_labels
     def get_data(self, data_type):
         return self.filtered_data_frames[data_type]
-    
     def get_feature_paths(self):
         return self.feature_paths
+    def set_feature_paths(self, feature_paths):
+        self.feature_paths = feature_paths
     
     def load_existing_features(self):
         """
@@ -535,7 +553,16 @@ class ModelAutomater:
 
         print(f"Training set length: {len(self.training_set)}. Testing set length: {len(self.testing_set)}")
         return self.training_set, self.testing_set
-
+    def set_training_data(self, data):
+        self.training_set = data
+        self.train_keys = data.index
+    def set_testing_data(self, data):
+        self.testing_set = data 
+        self.test_keys = data.index 
+    def get_training_data(self):
+        return self.training_set, self.train_keys 
+    def get_testing_data(self):
+        return self.testing_set, self.test_keys
     def fill_sample_weights(self, sample_weights):
         sample_weights_final = {}
 
