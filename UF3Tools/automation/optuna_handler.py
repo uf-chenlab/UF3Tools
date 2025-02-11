@@ -101,8 +101,8 @@ def worker_init_once(
         m for m in all_materials 
         if m.split(":")[0] in settings['testing_mp_structures']
     ]
-    automater.set_dft_validation_structures(filtered)
-    automater.set_lammps_validation_structures(filtered)
+    automater.set_dft_validation_structures(settings['testing_mp_structures'])
+    automater.set_lammps_validation_structures(settings['testing_mp_structures'])
     automater.download_validation_structures()
     print("init once data laoded")
     # Store in the global
@@ -257,11 +257,6 @@ def train_with_preloaded_data(params, settings, trial_id=0):
         return None, f"Training failed: {exc}"
     
     # Validation
-    frame_name, feature_name = settings['parity_data']
-    automater.set_parity_data(frame_name, feature_name)
-    # not strictly needed if you do it once, but we'll ensure correct
-    frame, feature = automater.get_parity_data()
-
     analyzer = ModelAnalyzer(
         chemical_system, 
         trainer_model, 
