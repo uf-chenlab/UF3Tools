@@ -26,3 +26,5 @@ UF3Tools/simulations/validations/__pycache__/LangevinValidation.cpython-310.pyc
 UF3Tools/simulations/validations/__pycache__/LatticeConstantValidation.cpython-310.pyc
 UF3Tools/simulations/validations/__pycache__/PotentialValidation.cpython-310.pyc
 UF3Tools/simulations/validations/__pycache__/SurfaceEnergyValidation.cpython-310.pyc
+*.pyc
+*/__pycache__/*
