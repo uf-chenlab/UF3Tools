@@ -1424,7 +1424,7 @@ class ModelAnalyzer:
         for element_list in self.chemical_system.interactions_map[3]:
             self.analyze_3b(element_list, self.model)
         self.generate_density_plot(analysis)
-        results = self.test_model_prediction(training = training)
+        results= self.test_model_prediction(training = training)
         #results = self.export_prediction_data_to_dataframe()
         self.generate_parity_plots()
         return results
@@ -1479,7 +1479,8 @@ class ModelAnalyzer:
         else:
             y_e, p_e, y_f, p_f, rmse_e, rmse_f, ids, force_ids = self.model.batched_predict(self.feature_filenames[0], keys=keys)
 
-
+        sigma_e = np.std(y_e, ddof=1)  # Standard deviation of energy
+        sigma_f = np.std(y_f, ddof=1)  # Standard deviation of force
         # Store results in a dictionary
         self.prediction_data = {
             "y_e": y_e,
@@ -1488,6 +1489,8 @@ class ModelAnalyzer:
             "p_f": p_f,
             "rmse_e": rmse_e,
             "rmse_f": rmse_f,
+            "sigma_e": sigma_e,
+            "sigma_f": sigma_f,
             "ids": ids,
             "force_ids": force_ids
         }
@@ -1607,12 +1610,13 @@ class ModelAnalyzer:
             #make dft and lammps folders within every structure folder
             for structure in self.dft_validation_structures:
                 structure_folder_path = os.path.join(structures_folder_path, structure)
-                dft_folder_path = os.path.join(structure_folder_path, "dft")
-                if not os.path.exists(dft_folder_path):
-                    os.makedirs(dft_folder_path)
-                lammps_folder_path = os.path.join(structure_folder_path, "lammps")
-                if not os.path.exists(lammps_folder_path):
-                    os.makedirs(lammps_folder_path)
+                if os.path.isdir(structure_folder_path):
+                    dft_folder_path = os.path.join(structure_folder_path, "dft")
+                    if not os.path.exists(dft_folder_path):
+                        os.makedirs(dft_folder_path)
+                    lammps_folder_path = os.path.join(structure_folder_path, "lammps")
+                    if not os.path.exists(lammps_folder_path):
+                        os.makedirs(lammps_folder_path)
         print("returning from folder structure setup")
         return validation_folder_path
     def retrieve_model_files(self):
@@ -1620,7 +1624,7 @@ class ModelAnalyzer:
         if self.dft_validation_structures:
             for structure in self.dft_validation_structures:
                 #get the mp id from the structure name (its in format POSCAR_mpid)
-                print("structure: ", structure)
+                print("downloading structure: ", structure)
                 mpid = structure
                 directory = os.path.join("validation/structures/", structure)
                 print("directory: ", directory)

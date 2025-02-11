@@ -102,7 +102,7 @@ class ModelAutomater:
         #self.initialize_directories()
         self.banned_name_list = ['cubic', 'hexagonal', 'fcc', 'bcc', 'hcp', 'diamond', 'graphite', 'amorphous', 'liquid', 'surface_energy',]
         self.trainer = None
-        
+        self.structure_downloader = StructureDownloader(MP_API_KEY)
         # Validation Parameters
         self.validation_lammps_models = []
         self.cutoffs = {}
@@ -116,6 +116,14 @@ class ModelAutomater:
         return self.dft_validation_structures
     def set_lammps_validation_structures(self, validation_structures):
         self.lammps_validation_structures = validation_structures
+    def download_validation_structures(self):
+        if self.dft_validation_structures:
+            for structure in self.dft_validation_structures:
+                print("downloading structure: ", structure)
+                mpid = structure
+                directory = os.path.join("validation/structures/", structure)
+                print("directory: ", directory)
+                self.structure_downloader.download_single_structure(mpid, directory)
     def get_lammps_validation_structures(self):
         return self.lammps_validation_structures
     def get_chemical_system(self):
@@ -515,7 +523,7 @@ class ModelAutomater:
         :return: List of unique indices.
         """
         return data.index.to_series().apply(lambda x: x.lower().split('_run')[0]).unique()
-    def split_data(self, test_percent=0.2, filter_index=True):
+    def split_data(self, test_percent=0.2, filter_index=True, unique_indices=True):
         """
         Split the data into training and testing sets.
 
@@ -526,7 +534,10 @@ class ModelAutomater:
         """
 
         # Get unique index prefixes
-        index_prefixes = self.get_unique_indices(self.model_data)
+        if unique_indices == True:
+            index_prefixes = self.get_unique_indices(self.model_data)
+        else: 
+            index_prefixes = self.model_data.index.to_series()
 
         np.random.seed(42)  # for reproducibility
         num_indices_to_select = int(test_percent * len(index_prefixes))
