@@ -15,7 +15,8 @@ import uuid
 import os
 import shutil
 from datetime import datetime
-
+import concurrent.futures
+import time
 import optuna
 from dask.distributed import Client
 from dask_jobqueue import SLURMCluster
@@ -109,6 +110,18 @@ def worker_init_once(
     GLOBAL_AUTOMATER = automater
     os.chdir(trial_folder)
     return f"Data loaded on {worker_hostname}"
+
+def validate_potential_with_timeout(analyzer, potential_label, model_filename, element_list, validations_to_run, timeout=600):
+    # assumes 999 loss if the simulation takes too long (it blew up)
+    def run_validation():
+        return analyzer.validate_potential(potential_label, model_filename, element_list, validations_to_run)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(run_validation)
+        try:
+            return future.result(timeout=timeout)
+        except concurrent.futures.TimeoutError:
+            print("Validation took too long and was aborted.")
+            return None
 # Define loss function with normalized errors
 def loss_function(avg_result, normalized_error, acceptable_errors, weights):
     # Extract relevant values
@@ -200,6 +213,8 @@ def parse_validation_data(validation_data, normalized_error, acceptable_errors, 
     
     final_loss = loss_function(avg_result, normalized_error, acceptable_errors, weights)
     print("Final Loss:", final_loss)
+    if final_loss is None:
+        return 999
     if(final_loss <= 0.1):
         return 999
     else:
@@ -273,7 +288,10 @@ def train_with_preloaded_data(params, settings, trial_id=0):
     if 'al' in settings['chemical_formula'].lower():
         analyzer.fix_repulsion_2b(pair=('Al', 'Al'), r_target=0.25, min_curvature=50.0)
     result = analyzer.test_model_prediction(training=False)
-    normalized_error= 0.5*((result['rmse_e']/result['sigma_e']) + (result['rmse_f']/result['sigma_f']))
+    if(settings['loss_weights']['error'] == 0):
+        normalized_error = 0
+    else:
+        normalized_error= 0.5*((result['rmse_e']/result['sigma_e']) + (result['rmse_f']/result['sigma_f']))
 
     analyzer.export_model_to_lammps(
         os.getcwd(), 
@@ -287,7 +305,13 @@ def train_with_preloaded_data(params, settings, trial_id=0):
 
     try:
         print("lick my balls")
-        validation_data = analyzer.validate_potential(potential_label, model_filename, settings['element_list'], settings['validations_to_run'])
+        validation_data = validate_potential_with_timeout(
+            analyzer, potential_label, model_filename, 
+            settings['element_list'], settings['validations_to_run'], timeout=600
+        )
+        if(validation_data is None):
+            print("validation data is none! timed out")
+            return None, 999  # Assigning high loss
         print("potential validated")
     except Exception as e:
         return {"status": "failed", "error": f"Validation error: {str(e)}"}
@@ -318,7 +342,7 @@ def objective(trial, client, settings):
     if(settings['optimize_sample_weights'] == True):
         sample_weights = {}
         for key in settings["sample_weights_to_optimize"]:
-            sample_weights[key] = trial.suggest_float(f"sample_weights_{key}", 0.01, 5.0, log=True)
+            sample_weights[key] = trial.suggest_float(f"sample_weights_{key}", 0.01, 1.0, log=False)
         settings['sample_weights'].update(sample_weights)
 
     # Submit the training/validation to a worker
@@ -336,12 +360,13 @@ def objective(trial, client, settings):
         validation_data, normalized_error = result
     else:
         error, validation_data = None, result  # Assume result is the validation_data
+        print("the weirde else case")
 
 
     if validation_data is None:
         # Return a large penalty
         print(f"[Trial {trial.number}] failed: {validation_data}")
-        return 1e6
+        return 999
     print(validation_data)
     # Parse RMSE from validation_data
     # Adjust to your actual data structure
