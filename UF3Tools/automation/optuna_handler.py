@@ -209,14 +209,14 @@ def parse_validation_data(validation_data, normalized_error, acceptable_errors, 
                 avg_result[key] = avg_result.get(key, 0) + value / num_results
     else:
         print("no validation results")
-        return 999
+        return None
     
     final_loss = loss_function(avg_result, normalized_error, acceptable_errors, weights)
     print("Final Loss:", final_loss)
     if final_loss is None:
-        return 999
-    if(final_loss <= 0.1):
-        return 999
+        return None
+    if(final_loss <= 0.05):
+        return None
     else:
         return final_loss
 def train_with_preloaded_data(params, settings, trial_id=0):
@@ -366,7 +366,7 @@ def objective(trial, client, settings):
     if validation_data is None:
         # Return a large penalty
         print(f"[Trial {trial.number}] failed: {validation_data}")
-        return 999
+        return None
     print(validation_data)
     # Parse RMSE from validation_data
     # Adjust to your actual data structure
