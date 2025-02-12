@@ -1,10 +1,12 @@
 import os 
 import shutil
 import re
+
+from .Simulation import LammpsSimulation
 from ..common.LammpsInputFileHandler import LammpsInputFileHandler
 from ..common.DFTDataParser import DFTDataParser
         
-class CohesiveEnergySimulation:
+class CohesiveEnergySimulation(LammpsSimulation):
     def __init__(self, simulation_directory, template_directory, **kwargs):
         """
         Initialize the RelaxationSimulation with a simulation directory and any additional parameters.
@@ -33,22 +35,8 @@ class CohesiveEnergySimulation:
             'maxeval': '50000'
         }
         self.parameters.update(kwargs)
+        super().__init__(simulation_directory, template_directory, 'in.cohesive', "lammps.in", self.parameters, **kwargs)
         self.cohesive_energy = {}
-       
-    def set_potential_file(self, potential_file):
-        """
-        Set the potential file for the LAMMPS simulation.
-        """
-        self.parameters['uf3_file'] = potential_file
-        self.setup_input_file()
-
-    def setup_input_file(self):
-        """
-        Set up the LAMMPS input file for the relaxation simulation.
-        """
-        handler = LammpsInputFileHandler(self.template_file, self.output_file) 
-        handler.update_simulation_parameters(**self.parameters)
-        handler.generate_input_file()
         
     def check_existing_results(self):
         """
@@ -84,7 +72,7 @@ class CohesiveEnergySimulation:
             else:
                 print("Error: Surface energy could not be extracted. Please check the format of energy.txt.")
                 results['cohesive_energy'] = None
-
+            self.result = results
             return results
 
         except:

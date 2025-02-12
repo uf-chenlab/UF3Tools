@@ -7,6 +7,17 @@ from ..common.DFTDataParser import DFTDataParser
 import ast
 
 class PotentialValidation:
+    computational_weight = 0
+    required_base_simulations = []
+    
+    @classmethod
+    def get_computational_weight(self):
+        return self.computational_weight
+    
+    @classmethod
+    def get_required_base_simulations(self):
+        return self.required_base_simulations
+    
     def __init__(self, potential_file, lammps_model_file, dft_model_file, element_list, root_directory, use_dft=False):
         #initialize variables
         print("potentialvalidation init")
@@ -39,7 +50,8 @@ class PotentialValidation:
         self.dft_manager = DFTSimulationManager()
         self.dft_result = {}
         self.lammps_results = []
-
+        
+    
     def start_validation(self, overwrite=True, local=False):
         """
         Start the validation process by running the LAMMPS and DFT simulations.

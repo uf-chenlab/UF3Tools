@@ -3,8 +3,9 @@ import shutil
 import re
 from ..common.LammpsInputFileHandler import LammpsInputFileHandler
 from ..common.DFTDataParser import DFTDataParser
+from .Simulation import LammpsSimulation
 
-class SurfaceEnergyBulkSimulation:
+class SurfaceEnergyBulkSimulation(LammpsSimulation):
     def __init__(self, simulation_directory, template_directory, **kwargs):
         """
         Initialize the RelaxationSimulation with a simulation directory and any additional parameters.
@@ -24,20 +25,8 @@ class SurfaceEnergyBulkSimulation:
             'change_box': '',
         }
         self.parameters.update(kwargs)
+        super().__init__(simulation_directory, template_directory, 'in.surface', "lammps.in", self.parameters, **kwargs)
         
-    def set_potential_file(self, potential_file):
-        """
-        Set the potential file for the LAMMPS simulation.
-        """
-        self.parameters['uf3_file'] = potential_file
-        self.setup_input_file()
-    def setup_input_file(self):
-        """
-        Set up the LAMMPS input file for the relaxation simulation.
-        """
-        handler = LammpsInputFileHandler(self.template_file, self.output_file) 
-        handler.update_simulation_parameters(**self.parameters)
-        handler.generate_input_file()
     def check_existing_results(self):
         """
         Check if the simulation directory already contains results.
@@ -100,7 +89,7 @@ class SurfaceEnergyBulkSimulation:
             }
         
 
-class SurfaceEnergyFreeSimulation:
+class SurfaceEnergyFreeSimulation(LammpsSimulation):
     def __init__(self, simulation_directory, template_directory, **kwargs):
         """
         Initialize the RelaxationSimulation with a simulation directory and any additional parameters.
@@ -117,20 +106,8 @@ class SurfaceEnergyFreeSimulation:
             'change_box': 'change_box all z final 0.0 30 units box'
         }
         self.parameters.update(kwargs)
+        super().__init__(simulation_directory, template_directory, 'in.surface', "lammps.in", self.parameters, **kwargs)
         
-    def set_potential_file(self, potential_file):
-        """
-        Set the potential file for the LAMMPS simulation.
-        """
-        self.parameters['uf3_file'] = potential_file
-        self.setup_input_file()
-    def setup_input_file(self):
-        """
-        Set up the LAMMPS input file for the relaxation simulation.
-        """
-        handler = LammpsInputFileHandler(self.template_file, self.output_file) 
-        handler.update_simulation_parameters(**self.parameters)
-        handler.generate_input_file()
     def check_existing_results(self):
         """
         Check if the simulation directory already contains results.
@@ -195,7 +172,7 @@ class SurfaceEnergyFreeSimulation:
                 'area': 1
             }
 
-class SurfaceEnergyRelaxationSimulation:
+class SurfaceEnergyRelaxationSimulation(LammpsSimulation):
     def __init__(self, simulation_directory, template_directory, **kwargs):
         """
         Initialize the RelaxationSimulation with a simulation directory and any additional parameters.
@@ -214,20 +191,8 @@ class SurfaceEnergyRelaxationSimulation:
             'z_boundary': 'p',
         }
         self.parameters.update(kwargs)
+        super().__init__(simulation_directory, template_directory, 'in.surface', "lammps.in", self.parameters, **kwargs)
         
-    def set_potential_file(self, potential_file):
-        """
-        Set the potential file for the LAMMPS simulation.
-        """
-        self.parameters['uf3_file'] = potential_file
-        self.setup_input_file()
-    def setup_input_file(self):
-        """
-        Set up the LAMMPS input file for the relaxation simulation.
-        """
-        handler = LammpsInputFileHandler(self.template_file, self.output_file) 
-        handler.update_simulation_parameters(**self.parameters)
-        handler.generate_input_file()
     def check_existing_results(self):
         """
         Check if the simulation directory already contains results.
@@ -247,7 +212,7 @@ class SurfaceEnergyRelaxationSimulation:
 
         return energy_text     
 
-class SurfaceEnergySimulation:
+class SurfaceEnergySimulation(LammpsSimulation):
     def __init__(self, simulation_directory, template_directory, **kwargs):
         """
         Initialize the RelaxationSimulation with a simulation directory and any additional parameters.
@@ -275,6 +240,7 @@ class SurfaceEnergySimulation:
         #self.relaxation_simulation = SurfaceEnergyRelaxationSimulation(self.simulation_directory + "/SurfaceEnergyRelaxationSimulation", template_directory, **self.parameters)
         self.free_simulation = SurfaceEnergyFreeSimulation(self.simulation_directory + "/SurfaceEnergyFreeSimulation", template_directory, **self.parameters)
         self.bulk_simulation = SurfaceEnergyBulkSimulation(self.simulation_directory + "/SurfaceEnergyBulkSimulation", template_directory, **self.parameters)
+        super().__init__(simulation_directory, template_directory, 'in.surface', "lammps.in", self.parameters, **kwargs)
     def set_potential_file(self, potential_file):
         """
         Set the potential file for the LAMMPS simulation.

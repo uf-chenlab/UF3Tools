@@ -2,8 +2,9 @@ import os
 import re
 from ..common.LammpsInputFileHandler import LammpsInputFileHandler
 from ..common.DFTDataParser import DFTDataParser
+from .Simulation import LammpsSimulation
 
-class ElasticTensorSimulation:
+class ElasticTensorSimulation(LammpsSimulation):
     def __init__(self, simulation_directory, template_directory, **kwargs):
         self.template_file = template_directory + "in.elastic"
         self.original_directory = os.getcwd()
@@ -24,20 +25,7 @@ class ElasticTensorSimulation:
         }
         self.parameters.update(kwargs)
         self.lattice_parameters = {}
-    
-    def set_potential_file(self, potential_file):
-        """
-        Set the potential file for the LAMMPS simulation.
-        """
-        self.parameters['uf3_file'] = potential_file
-        self.setup_input_file()
-    def setup_input_file(self):
-        """
-        Set up the LAMMPS input file for the relaxation simulation.
-        """
-        handler = LammpsInputFileHandler(self.template_file, self.output_file) 
-        handler.update_simulation_parameters(**self.parameters)
-        handler.generate_input_file()
+        super().__init__(simulation_directory, template_directory, 'in.elastic', "lammps.in", self.parameters, **kwargs)
         
     def check_existing_results(self):
         """
@@ -109,7 +97,7 @@ class ElasticTensorSimulation:
             
             if lammps_data["shear_modulus_voigt"] and lammps_data["shear_modulus_reuss"]:
                 lammps_data["shear_modulus_hill"] = (lammps_data["shear_modulus_voigt"] + lammps_data["shear_modulus_reuss"]) / 2
-            
+            self.result = lammps_data
             return lammps_data
         except: 
             return {}

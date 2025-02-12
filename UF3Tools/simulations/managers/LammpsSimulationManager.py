@@ -7,7 +7,7 @@ from ..simulations.LangevinSimulation import LangevinSimulation
 from ..simulations.SurfaceEnergySimulation import SurfaceEnergySimulation
 from ..simulations.ElasticTensorSimulation import ElasticTensorSimulation
 from ..simulations.CohesiveEnergySimulation import CohesiveEnergySimulation
-
+from ..simulations.BaseRelaxationSimulation import *
 class LammpsSimulationManager(SimulationManager):
     def __init__(self):
         # Automatically set the parent directory to "/lammps"
@@ -35,6 +35,9 @@ class LammpsSimulationManager(SimulationManager):
         elif simulation_type.lower() == "cohesive_energy":
             template_directory = os.path.join(self.parent_directory, "templates/cohesive_energy/")
             self.simulation = CohesiveEnergySimulation(self.simulation_dir, template_directory, **kwargs)
+        elif simulation_type.lower() == "base_relaxation":
+            template_directory = os.path.join(self.parent_directory, "templates/base_relaxation/")
+            self.simulation = BaseRelaxationSimulation(self.simulation_dir, template_directory, **kwargs)
         else:
             raise ValueError(f"Simulation type '{simulation_type}' is not supported.")
         print("object created")
@@ -46,6 +49,8 @@ class LammpsSimulationManager(SimulationManager):
         """
         Start the LAMMPS simulation with the appropriate command.
         """
+        if isinstance(self.simulation, BaseSimulation):
+            overwrite = False
         if(local == True):
             command = "chmod 777 startSimulation.sh && ./startSimulation.sh"
         else:

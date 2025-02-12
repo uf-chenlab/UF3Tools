@@ -2,6 +2,7 @@ from .PotentialValidation import *
 import re
 
 class CohesiveEnergyValidation(PotentialValidation):
+    computational_weight=1
     def __init__(self, potential_file, lammps_model_file, dft_model_file, element_list, validation_folder_path,**kwargs):
         self.default_kwargs = {
             'min_style': 'cg',
