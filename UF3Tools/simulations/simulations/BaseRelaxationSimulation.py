@@ -54,44 +54,48 @@ class BaseRelaxationSimulation(BaseSimulation):
         
     def _read_lattice_constants(self):  
         lattice_file_path = os.path.join(self.simulation_directory, "lattice.txt")
-        lattice_parameters = {}
         try:
-            with open(lattice_file_path, "r") as file:
-                lattice_text = file.read()
             pattern = r'a:\s*([\d.]+)\s*b:\s*([\d.]+)\s*c:\s*([\d.]+)\s*alpha:\s*([\d.]+)\s*beta:\s*([\d.]+)\s*gamma:\s*([\d.]+)'
-            match = re.search(pattern, lattice_text)
+            match = self.read_result_file(lattice_file_path, pattern)
             if match:
-                lattice_parameters = {key: float(match.group(i+1)) for i, key in enumerate(['a', 'b', 'c', 'alpha', 'beta', 'gamma'])}
-                self.lattice_parameters = lattice_parameters
+                self.result['lattice_constant'] = {key: float(match.group(i+1)) for i, key in enumerate(['a', 'b', 'c', 'alpha', 'beta', 'gamma'])}
             else:
                 print("Error: Lattice parameters could not be extracted.")
+                self.result['lattice_constant'] = None
         except:
-            return {key: 999 for key in ['a', 'b', 'c', 'alpha', 'beta', 'gamma']}
-
-        return lattice_parameters 
+            self.result['lattice_constant'] = None
+        return self.result['lattice_constant']
     def _read_cohesive_energy(self):
-        results = {}
         energy_file_path = os.path.join(self.simulation_directory, "energy.txt")
         try:
-            # Read the contents of the energy.txt file
-            with open(energy_file_path, "r") as file:
-                energy_text = file.read()
+            energy_pattern = r'ecoh\s*=\s*([-.\d]+)'
 
-            # Regular expression pattern to match the surface energy result
-            energy_pattern = r'ecoh\s*=\s*([-.\d]+)'  # Modified pattern to handle negative numbers
-
-            energy_match = re.search(energy_pattern, energy_text)
+            energy_match = self.read_result_file(energy_file_path, energy_pattern)
 
             if energy_match:
                 energy = float(energy_match.group(1))
-                results['cohesive_energy'] = energy
+                self.result['cohesive_energy'] = energy
             else:
                 print("Error: Surface energy could not be extracted. Please check the format of energy.txt.")
-                results['cohesive_energy'] = 999999
-
-            return results
+                self.result['cohesive_energy'] = None
 
         except:
-            return {
-                "cohesive_energy": 999999
-            }
+            self.result['cohesive_energy'] = None
+        return self.result['cohesive_energy']
+    
+    def _read_total_energy(self):
+        energy_file_path = os.path.join(self.simulation_directory, "total_energy.txt")
+        try:
+            energy_pattern = r'total\s*energy\s*=\s*([-.\d]+)'
+            energy_match = self.read_result_file(energy_file_path, energy_pattern)
+
+            if energy_match:
+                energy = float(energy_match.group(1))
+                self.result['bulk_energy'] = energy
+            else:
+                print("Error: Surface energy could not be extracted. Please check the format of energy.txt.")
+                self.result['bulk_energy'] = None
+
+        except:
+            self.result['bulk_energy'] = None
+        return self.result['bulk_energy']

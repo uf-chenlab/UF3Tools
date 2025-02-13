@@ -2,6 +2,7 @@ import os
 import subprocess
 from ..common.LammpsInputFileHandler import LammpsInputFileHandler
 from ..common.DFTDataParser import DFTDataParser
+import re
 
 class LammpsSimulation:
     @classmethod
@@ -79,6 +80,16 @@ class BaseSimulation(LammpsSimulation):
         else:
             print("No base simulation results found. simulation not run")
         return self.result
+    def read_result_file(self, result_file, pattern):
+        results = {}
+        try:
+            with open(result_file, 'r') as f:
+                lines = f.read()
+            match = re.search(pattern, lines)
+            return match
+        except:
+            print(f"Error: Could not open file {result_file}")
+            return None
     
     
 class CompoundSimulation(LammpsSimulation):
