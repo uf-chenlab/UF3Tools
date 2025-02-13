@@ -1,17 +1,25 @@
 import os
-import re
-from .Simulation import LammpsSimulation
-from ..common.LammpsInputFileHandler import LammpsInputFileHandler
-from ..common.DFTDataParser import DFTDataParser
+from .Simulation import CompoundSimulation
+from .BaseRelaxationSimulation import *
 
-class RelaxationSimulation(LammpsSimulation):
-    def __init__(self, simulation_directory, template_directory, **kwargs):
-        parameters = {
+class LatticeConstantSimulation(CompoundSimulation):
+    required_sub_simulations = [BaseRelaxationSimulation]
+    simulation_type = "LatticeConstant"
+    result_type = "lattice_constant"
+    def __init__(self, simulation_directory, template_directory, sub_simulations, **kwargs):
+        self.original_directory = os.getcwd()
+        self.simulation_directory = os.path.join(simulation_directory, (self.simulation_type+'Simulation'))
+        self.template_file_name = 'in.lattice'
+        self.output_file = os.path.join(simulation_directory, "lammps.in")
+        self.parameters = {
             'atom_style': 'atomic',
+            'x_boundary': 'p',
+            'y_boundary': 'p',
+            'z_boundary': 'p',
+            'change_box': '',
             'uf3_degree': '3',
             'uf3_file': 'AlN.uf3',
             'uf3_elements': 'Al N',
-            'change_box': '',
             'box_relax_settings': 'fix 1 all box/relax iso 0.0 vmax 0.001',
             'min_style': 'cg',
             'etol': '1e-25',
@@ -19,32 +27,17 @@ class RelaxationSimulation(LammpsSimulation):
             'maxiter': '10000',
             'maxeval': '50000'
         }
-        super().__init__(simulation_directory, template_directory, "in.relax", "lammps.in", parameters, **kwargs)
-        self.lattice_parameters = {}
-    def check_existing_results(self):
-        """
-        Check if the simulation directory already contains results.
-
-        :return: True if both OUTCAR and CONTCAR exist, False otherwise.
-        """
-        return os.path.exists(os.path.join(self.simulation_directory, "lattice.txt"))
+        self.parameters.update(kwargs)
+        super().__init__(self.simulation_directory, os.path.join(template_directory, (self.simulation_type + 'Simulation')), self.template_file_name, "lammps.in", self.parameters, sub_simulations, **kwargs)
     def process_simulation_results(self):
-        lattice_file_path = os.path.join(self.simulation_directory, "lattice.txt")
-        lattice_parameters = {}
-        try:
-            with open(lattice_file_path, "r") as file:
-                lattice_text = file.read()
-            pattern = r'a:\s*([\d.]+)\s*b:\s*([\d.]+)\s*c:\s*([\d.]+)\s*alpha:\s*([\d.]+)\s*beta:\s*([\d.]+)\s*gamma:\s*([\d.]+)'
-            match = re.search(pattern, lattice_text)
-            if match:
-                lattice_parameters = {key: float(match.group(i+1)) for i, key in enumerate(['a', 'b', 'c', 'alpha', 'beta', 'gamma'])}
-                self.lattice_parameters = lattice_parameters
-            else:
-                print("Error: Lattice parameters could not be extracted.")
-        except:
-            lattice_parameters = {key: 999 for key in ['a', 'b', 'c', 'alpha', 'beta', 'gamma']}
-        self.result = lattice_parameters
-        return lattice_parameters
+        if(self.sub_simulations == {}):
+            return {}
+        if('BaseRelaxation' in self.sub_simulations.keys()):
+            sim = self.sub_simulations['BaseRelaxation']
+            self.result = {
+                self.result_type: sim.get_result()[self.result_type]
+            }
+        return self.result
     
 
 class DFTRelaxationSimulation():

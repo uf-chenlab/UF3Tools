@@ -1,7 +1,4 @@
 import os
-import re
-from ..common.LammpsInputFileHandler import LammpsInputFileHandler
-from ..common.DFTDataParser import DFTDataParser
 from .Simulation import CompoundSimulation
 from .BaseRelaxationSimulation import *
 
@@ -9,8 +6,10 @@ from .BaseRelaxationSimulation import *
 class CohesiveEnergySimulation(CompoundSimulation):
     required_sub_simulations = [BaseRelaxationSimulation]
     simulation_type = "CohesiveEnergy"
+    result_type = "cohesive_energy"
     def __init__(self, simulation_directory, template_directory, sub_simulations, **kwargs):
         self.original_directory = os.getcwd()
+        self.template_file_name = 'in.cohesive'
         self.simulation_directory = os.path.join(simulation_directory, (self.simulation_type+'Simulation'))
         self.output_file = os.path.join(simulation_directory, "lammps.in")
         self.parameters = {
@@ -30,27 +29,14 @@ class CohesiveEnergySimulation(CompoundSimulation):
             'maxeval': '50000'
         }
         self.parameters.update(kwargs)
-        super().__init__(self.simulation_directory, os.path.join(template_directory, (self.simulation_type + 'Simulation')), "in.cohesive", "lammps.in", self.parameters, sub_simulations, **kwargs)
-    def run_simulation(self, local=False, overwrite=False):
-        if(self.sub_simulations != {}):
-            if(self.result != {}):
-                return self.result
-            else:
-                return self.process_simulation_results()
-        else:
-            print(f"MISSING SUB SIMULATION RESULT")
-            return None
+        super().__init__(self.simulation_directory, os.path.join(template_directory, (self.simulation_type + 'Simulation')), self.template_file_name, "lammps.in", self.parameters, sub_simulations, **kwargs)
     def process_simulation_results(self):
         if(self.sub_simulations == {}):
             return {}
-        print("sub sims: ", self.sub_simulations)
         if('BaseRelaxation' in self.sub_simulations.keys()):
             sim = self.sub_simulations['BaseRelaxation']
-            print("sim: ", sim)
-            print("result: ", sim.get_result())
-            cohesive_energy = sim.get_result()['cohesive_energy']
             self.result = {
-                'cohesive_energy': cohesive_energy
+                self.result_type: sim.get_result()[self.result_type]
             }
         return self.result
         

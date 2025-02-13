@@ -1,12 +1,13 @@
 from .PotentialValidation import *
-    
+from ..simulations.LatticeConstantSimulation import LatticeConstantSimulation
 class LatticeConstantValidation(PotentialValidation):
-    def __init__(self, potential_file, lammps_model_file, dft_model_file, element_list, validation_folder_path, **kwargs):
-        
-        print("lattice constant constructor")
-        
-        print(f'intiailizing files:, {potential_file}, {lammps_model_file}, {dft_model_file}, {element_list}, {validation_folder_path}')
-        
+    @classmethod
+    def get_required_base_simulations(cls):
+        return LatticeConstantSimulation.get_required_sub_simulations()
+    computational_weight=1
+    def __init__(self, potential_file, lammps_model_file, dft_model_file, element_list, validation_folder_path,**kwargs):
+        self.simulation_type = "LatticeConstantSimulation"
+        super().__init__(self.simulation_type, potential_file, lammps_model_file, dft_model_file, element_list,  validation_folder_path,use_dft=False)
         self.default_kwargs = {
             'min_style': 'cg',
             'uf3_elements': element_list
@@ -14,23 +15,24 @@ class LatticeConstantValidation(PotentialValidation):
         # Update the default keyword arguments with the user-specified arguments
         self.kwargs = self.default_kwargs
         self.kwargs.update(kwargs)
+        self.dft_data = {
+            "lattice_constant": None,
+        }
+        self.lammps_data = {
+            "lattice_constant": None
+        }
+        self.use_dft = False
         
-        super().__init__("lattice_constant", potential_file, lammps_model_file, dft_model_file, element_list,  validation_folder_path, use_dft=True)
-    def initialize_simulation_files(self):
+        self.lammps_manager.setup_simulation(self.simulation_type)
+        self.simulation = LatticeConstantSimulation(self.lammps_manager.get_root_directory(), self.lammps_manager.get_template_directory(), None, **kwargs)
+        self.required_base_simulations = self.simulation.get_required_sub_simulations()
+        self.initialize_simulation_files()
+    def retrieve_dft_result(self, path):
         """
-        Initialize the simulation files needed for the potential file.
+        Retrieve DFT results from the specified path.
         """
-        print("lattice constant initialize")
-        # LAMMPS SETUP
-        self.lammps_manager.setup_simulation("relaxation")
-        print("lammps manager setup")
-        os.chdir(self.original_directory)
-        print("original directory: ", self.original_directory)
-        print(f"potential and model files: {self.potential_file}, {self.lammps_model_file}")
-        self.lammps_manager.set_potential_file(self.potential_file, self.simulation)
-        self.lammps_manager.set_model_file(self.lammps_model_file)
-        
-        #DFT SETUP
-        self.dft_manager.setup_simulation("relaxation", ncore=2)
-        self.dft_manager.set_model_file(self.dft_model_file)
-        os.chdir(self.root_directory)
+        print(f"looking for dft results in: {path}")
+        dft_parser = DFTDataParser(path)
+        self.dft_data = dft_parser.get_lattice_constants(path)
+        print(f"dft lattice: {self.dft_data}")
+        self.has_dft_data = True

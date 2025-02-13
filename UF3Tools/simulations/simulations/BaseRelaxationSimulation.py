@@ -47,10 +47,11 @@ class BaseRelaxationSimulation(BaseSimulation):
             return self.process_simulation_results()
         
     def process_simulation_results(self):
-        self.results = {}
-        self.results.update(self._read_cohesive_energy())
-        self.results.update(self._read_lattice_constants())
-        return self.results
+        self._read_cohesive_energy()
+        self._read_lattice_constants()
+        self._read_total_energy()
+        self._read_num_atoms()
+        return self.result
         
     def _read_lattice_constants(self):  
         lattice_file_path = os.path.join(self.simulation_directory, "lattice.txt")
@@ -75,12 +76,15 @@ class BaseRelaxationSimulation(BaseSimulation):
             if energy_match:
                 energy = float(energy_match.group(1))
                 self.result['cohesive_energy'] = energy
+                self.result['energy_per_atom'] = energy
             else:
                 print("Error: Surface energy could not be extracted. Please check the format of energy.txt.")
                 self.result['cohesive_energy'] = None
+                self.result['energy_per_atom'] = None
 
         except:
             self.result['cohesive_energy'] = None
+            self.result['energy_per_atom'] = None
         return self.result['cohesive_energy']
     
     def _read_total_energy(self):
@@ -99,3 +103,19 @@ class BaseRelaxationSimulation(BaseSimulation):
         except:
             self.result['bulk_energy'] = None
         return self.result['bulk_energy']
+    def _read_num_atoms(self):
+        num_atoms_file_path = os.path.join(self.simulation_directory, "num_atoms.txt")
+        try:
+            num_atoms_pattern = r'Number\s*of\s*atoms\s*=\s*(\d+)'
+            num_atoms_match = self.read_result_file(num_atoms_file_path, num_atoms_pattern)
+
+            if num_atoms_match:
+                num_atoms = int(num_atoms_match.group(1))
+                self.result['num_atoms'] = num_atoms
+            else:
+                print("Error: Surface energy could not be extracted. Please check the format of energy.txt.")
+                self.result['num_atoms'] = None
+
+        except:
+            self.result['num_atoms'] = None
+        return self.result['num_atoms']

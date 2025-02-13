@@ -8,6 +8,9 @@ class LammpsSimulation:
     @classmethod
     def get_id(cls):
         return cls.simulation_type
+    @classmethod
+    def get_result_type(cls):
+        return cls.result_type
     def __init__(self, 
                  simulation_directory, 
                  template_directory, 
@@ -23,16 +26,17 @@ class LammpsSimulation:
         self.parameters = parameters or {}
         self.parameters.update(kwargs)
         self.result = {}
-        self.simulation_type = ""
         self.setup_input_file()
-    def run_simulation(self, local=False, overwrite=False):
+    def run(self, local=False, overwrite=False):
         print(f"running simulation: {self.simulation_directory}")
         os.chdir(self.simulation_directory)
         if(local == True):
             command = "chmod 777 startSimulation.sh && ./startSimulation.sh"
         else:
-            command = "chmod 777 start_simulation_hpg.sh && ./start_simulation_hpg.sh"
-        subprocess.run(command, shell=True,stdout=subprocess.DEVNULL)
+            #command = "chmod 777 start_simulation_hpg.sh && ./start_simulation_hpg.sh"
+            command = "export OMP_NUM_THREADS=8 && mpirun -np 1 ./lmp_mpi_hpg < lammps.in"
+        #subprocess.run(command, shell=True,stdout=subprocess.DEVNULL)
+        subprocess.run(command, shell=True)
         result = self.process_simulation_results()
         os.chdir(self.original_directory)
         return result  
@@ -55,10 +59,7 @@ class LammpsSimulation:
             return self.result
         else:
             print("No simulation results!")
-            return {}
-    def run(self, lammps_manager):
-        self.results = lammps_manager.run_simulation(self)
-    
+            return {}    
     def process_simulation_results(self):
         raise NotImplementedError("Subclasses must implement this method")
     
@@ -118,6 +119,15 @@ class CompoundSimulation(LammpsSimulation):
         self.sub_simulations[simulation_type] = simulation
     def set_sub_simulations(self, simulations):
         self.sub_simulations = simulations
+    def run(self, local=False, overwrite=False):
+        if(self.sub_simulations != {}):
+            if(self.result != {}):
+                return self.result
+            else:
+                return self.process_simulation_results()
+        else:
+            print(f"MISSING SUB SIMULATION RESULT")
+            return None
 
     
         

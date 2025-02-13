@@ -6,7 +6,7 @@ from pymatgen.io.vasp.outputs import Outcar
 import numpy as np
 from pymatgen.core import Element
 from ..simulations.SurfaceEnergySimulation import DFTSurfaceEnergySimulation, DFTSurfaceEnergyBulkSimulation, DFTSurfaceEnergyFreeSimulation
-from ..simulations.RelaxationSimulation import DFTRelaxationSimulation
+from ..simulations.LatticeConstantSimulation import DFTRelaxationSimulation
 from ..common.DFTDataParser import DFTDataParser
 
 

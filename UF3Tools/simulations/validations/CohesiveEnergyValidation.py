@@ -31,10 +31,6 @@ class CohesiveEnergyValidation(PotentialValidation):
         self.simulation = CohesiveEnergySimulation(self.lammps_manager.get_root_directory(), self.lammps_manager.get_template_directory(), None, **kwargs)
         self.required_base_simulations = self.simulation.get_required_sub_simulations()
         self.initialize_simulation_files()
-    def initialize_simulation_files(self):
-        os.chdir(self.original_directory)
-        self.lammps_manager.set_potential_file(self.potential_file, self.simulation)
-        self.lammps_manager.set_model_file(self.lammps_model_file)
     def retrieve_dft_result(self, path):
         """
         Retrieve DFT results from the specified path.
@@ -54,7 +50,7 @@ class CohesiveEnergyValidation(PotentialValidation):
             self.lammps_manager.set_potential_file(self.potential_file, self.simulation)
             self.lammps_manager.set_model_file(self.lammps_model_file)
             os.chdir(self.root_directory)
-            self.lammps_results = self.simulation.run_simulation(overwrite=overwrite, local=local)
+            self.lammps_results = self.simulation.run(overwrite=overwrite, local=local)
         print(f"lammps results: {self.lammps_results}")
         # Proceed if both LAMMPS and DFT data are available (either newly run or from stored data)
         if self.lammps_results and ((self.use_dft and self.dft_data) or self.has_dft_data == True):
@@ -78,7 +74,7 @@ class CohesiveEnergyValidation(PotentialValidation):
         # If results are missing, throw an error
         print("NO DFT DATA FOUND IDIOT")
         return {
-            'cohesive_energy': 99999999
+            'cohesive_energy': None
         }
 
 

@@ -53,49 +53,57 @@ class PotentialValidation:
         self.dft_manager = DFTSimulationManager()
         self.dft_result = {}
         self.lammps_results = []
+    def initialize_simulation_files(self):
+        os.chdir(self.original_directory)
+        self.lammps_manager.set_potential_file(self.potential_file, self.simulation)
+        self.lammps_manager.set_model_file(self.lammps_model_file)
     def get_simulation(self):
         return self.simulation
     def start_validation(self, overwrite=True, local=False):
         """
-        Start the validation process by running the LAMMPS and DFT simulations.
+        Start the validation process by running the LAMMPS and DFT simulations and comparing results.
         """
-        if(self.lammps_results == []):
-            self.lammps_results = self.simulation.run_simulation()
-        
-        # Initialize DFT results
-        dft_results = None
-        if self.use_dft and not self.has_dft_data:
-            dft_results = self.dft_manager.start_simulation(overwrite=overwrite, local=local)
-        elif self.has_dft_data:
-            dft_results = self.dft_result.get(self.simulation_type, None)
-            if dft_results is None:
-                raise ValueError(f"DFT results missing for simulation type: {self.simulation_type}")
-
-        if self.lammps_results and ((self.use_dft and dft_results) or self.has_dft_data):
-            percent_error = []
-            
-            for lammps in self.lammps_results:
+        if self.lammps_results == []:
+            os.chdir(self.original_directory)
+            self.lammps_manager.set_potential_file(self.potential_file, self.simulation)
+            self.lammps_manager.set_model_file(self.lammps_model_file)
+            os.chdir(self.root_directory)
+            self.lammps_results = self.simulation.run(overwrite=overwrite, local=local)
+        print(f"lammps results: {self.lammps_results}")
+        # Proceed if both LAMMPS and DFT data are available (either newly run or from stored data)
+        if self.lammps_results and ((self.use_dft and self.dft_data) or self.has_dft_data == True):
+            print("entered if")
+            if self.has_dft_data:
+                if isinstance(self.lammps_results, list):
+                    self.lammps_results = self.lammps_results[0]
+                print("enetered dft data int ")
+                print(f"lammps result: {self.lammps_results[self.simulation.get_result_type()]}")
+                print(f'dft result: {self.dft_data}')
                 
-                # Ensure lammps is a dictionary
-                if not isinstance(lammps, dict):
-                    raise TypeError(f"Expected dict for LAMMPS, got {type(lammps)}")
-                if not isinstance(dft_results, dict):
-                    raise TypeError(f"Expected dict for DFT, got {type(dft_results)}")
+                # Initialize the dictionary for percent errors
+                percent_error = {}
+                if(self.simulation.get_result_type() in self.lammps_results.keys()):
+                    self.lammps_results = self.lammps_results[self.simulation.get_result_type()]
+                for key in self.lammps_results:
+                    if key in self.dft_data:
+                        dft_value = self.dft_data[key]
+                        lammps_value = self.lammps_results[key]
 
-                # Calculate percent error
-                error_dict = {}
-                for key in lammps:
-                    if key in dft_results:
-                        error_dict[key] = abs(lammps[key] - dft_results[key]) / dft_results[key] * 100
+                        if dft_value != 0:  # Prevent division by zero
+                            percent_error[key] = abs((lammps_value - dft_value) / dft_value) * 100
+                        else:
+                            percent_error[key] = None  # Handle zero-division case
+                        
                     else:
-                        print(f"Key '{key}' not found in DFT results, skipping.")
-                percent_error.append(error_dict)
+                        print(f"Warning: Key '{key}' not found in DFT results.")
 
-            return percent_error
-        elif self.lammps_results and not self.use_dft:
-            return self.lammps_results
-        else:
-            raise ValueError("LAMMPS or DFT results are missing.")
+                return percent_error
+
+        # If results are missing, throw an error
+        print("NO DFT DATA FOUND IDIOT")
+        return {
+           self.simulation.get_result_type(): None
+        }
     def retrieve_dft_result(self, path):
         # subclass should implement this
         raise NotImplementedError("Subclasses should implement this method")

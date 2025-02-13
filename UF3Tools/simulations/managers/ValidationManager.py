@@ -15,7 +15,7 @@ class ValidationManager:
             "langevin": LangevinValidation
     }
     dft_results_lut = {
-        'lattice_constant': "dft/simulations/RelaxationSimulation/",
+        'lattice_constant': "dft/simulations/RelaxationSimulation/CONTCAR",
         'cohesive_energy': "dft/simulations/CohesiveEnergySimulation/results.txt",
         'elastic_tensor': "dft/simulations/ElasticTensor/results.txt",
         'surface_energy': "dft/simulations/SurfaceEnergySimulation/"
@@ -65,7 +65,7 @@ class ValidationManager:
             print(f"workign dir: {os.getcwd()}")
             manager.set_model_file(self.lammps_model_file)
             os.chdir(self.validation_folder_path)
-            result = base_simulation.run_simulation(overwrite=overwrite, local=local)
+            result = base_simulation.run(overwrite=overwrite, local=local)
             self.base_results[base_simulation.get_id()] = result
             self.base_simulation_objects[base_simulation.get_id()] = base_simulation
         #check that the base results are valid
@@ -75,7 +75,9 @@ class ValidationManager:
         
         #sort the validations to run by computational weight
         self.validations_to_run.sort(key=lambda x: self.validation_lut[x].get_computational_weight())
+        print(f"validations to run: {self.validations_to_run}")
         for validation in self.validations_to_run:
+            print(f'running validation: {validation}')
             os.chdir(self.current_directory)
             validation_class = self.validation_lut[validation](
                 self.potential_file,
