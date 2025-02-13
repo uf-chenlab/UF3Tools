@@ -1,11 +1,11 @@
 from .PotentialValidation import *
-from ..simulations.NewCohesiveEnergySimulation import NewCohesiveEnergySimulation
+from ..simulations.CohesiveEnergySimulation import CohesiveEnergySimulation
 import re
 
 class CohesiveEnergyValidation(PotentialValidation):
     @classmethod
     def get_required_base_simulations(cls):
-        return NewCohesiveEnergySimulation.get_required_sub_simulations()
+        return CohesiveEnergySimulation.get_required_sub_simulations()
     computational_weight=1
     def __init__(self, potential_file, lammps_model_file, dft_model_file, element_list, validation_folder_path,**kwargs):
         self.simulation_type = "CohesiveEnergySimulation"
@@ -28,7 +28,7 @@ class CohesiveEnergyValidation(PotentialValidation):
         self.use_dft = False
         
         self.lammps_manager.setup_simulation(self.simulation_type)
-        self.simulation = NewCohesiveEnergySimulation(self.lammps_manager.get_root_directory(), self.lammps_manager.get_template_directory(), None, **kwargs)
+        self.simulation = CohesiveEnergySimulation(self.lammps_manager.get_root_directory(), self.lammps_manager.get_template_directory(), None, **kwargs)
         self.required_base_simulations = self.simulation.get_required_sub_simulations()
         self.initialize_simulation_files()
     def initialize_simulation_files(self):

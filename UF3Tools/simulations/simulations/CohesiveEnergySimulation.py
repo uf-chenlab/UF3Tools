@@ -1,22 +1,17 @@
-import os 
-import shutil
+import os
 import re
-
-from .Simulation import LammpsSimulation
 from ..common.LammpsInputFileHandler import LammpsInputFileHandler
 from ..common.DFTDataParser import DFTDataParser
-        
-class CohesiveEnergySimulation(LammpsSimulation):
-    def __init__(self, simulation_directory, template_directory, **kwargs):
-        """
-        Initialize the RelaxationSimulation with a simulation directory and any additional parameters.
+from .Simulation import CompoundSimulation
+from .BaseRelaxationSimulation import *
 
-        :param simulation_directory: The directory where the relaxation simulation will be set up.
-        :param kwargs: Additional parameters for setting up the simulation.
-        """
-        self.template_file = template_directory + "in.cohesive"
+
+class CohesiveEnergySimulation(CompoundSimulation):
+    required_sub_simulations = [BaseRelaxationSimulation]
+    simulation_type = "CohesiveEnergy"
+    def __init__(self, simulation_directory, template_directory, sub_simulations, **kwargs):
         self.original_directory = os.getcwd()
-        self.simulation_directory = simulation_directory
+        self.simulation_directory = os.path.join(simulation_directory, (self.simulation_type+'Simulation'))
         self.output_file = os.path.join(simulation_directory, "lammps.in")
         self.parameters = {
             'atom_style': 'atomic',
@@ -35,100 +30,27 @@ class CohesiveEnergySimulation(LammpsSimulation):
             'maxeval': '50000'
         }
         self.parameters.update(kwargs)
-        super().__init__(simulation_directory, template_directory, 'in.cohesive', "lammps.in", self.parameters, **kwargs)
-        self.cohesive_energy = {}
-        
-    def check_existing_results(self):
-        """
-        Check if the simulation directory already contains results.
-
-        :return: True if output file exists
-        """
-        
-        print(f"existing cohesive results: {os.path.exists(self.simulation_directory + '/energy.txt')}")
-        return os.path.exists(self.simulation_directory + "/energy.txt")
-       
-    def process_simulation_results(self):
-        """
-        Process the results of the relaxation simulation.
-        """
-         # Paths to the necessary files
-        energy_file_path = os.path.join(self.simulation_directory, "energy.txt")
-        results = {}
-
-        try:
-            # Read the contents of the energy.txt file
-            with open(energy_file_path, "r") as file:
-                energy_text = file.read()
-
-            # Regular expression pattern to match the surface energy result
-            energy_pattern = r'ecoh\s*=\s*([-.\d]+)'  # Modified pattern to handle negative numbers
-
-            energy_match = re.search(energy_pattern, energy_text)
-
-            if energy_match:
-                energy = float(energy_match.group(1))
-                results['cohesive_energy'] = energy
+        super().__init__(self.simulation_directory, os.path.join(template_directory, (self.simulation_type + 'Simulation')), "in.cohesive", "lammps.in", self.parameters, sub_simulations, **kwargs)
+    def run_simulation(self, local=False, overwrite=False):
+        if(self.sub_simulations != {}):
+            if(self.result != {}):
+                return self.result
             else:
-                print("Error: Surface energy could not be extracted. Please check the format of energy.txt.")
-                results['cohesive_energy'] = None
-            self.result = results
-            return results
-
-        except:
-            return {
-                "cohesive_energy": 999999
-            }
-    
-class DFTCohesiveEnergySimulation:
-    def __init__(self, simulation_directory, template_directory, **kwargs):
-        """
-        Initialize the DFTRelaxationSimulation with a simulation directory and any additional parameters.
-
-        :param simulation_directory: The directory where the relaxation simulation will be set up.
-        :param kwargs: Additional parameters for setting up the simulation.
-        """
-        self.template_file = template_directory + "INCAR"
-        self.original_directory = os.getcwd()
-        self.simulation_directory = simulation_directory
-        self.output_file = os.path.join(simulation_directory, "INCAR")
-        self.parameters = {
-            'algo': 'Fast',
-            'prec': 'Accurate',
-            'ibrion': '2',
-            'isif': '3',
-            'lcharg': 'FALSE',
-            'lwave': 'FALSE',
-            'lreal': 'FALSE',
-            'ismear': '0',
-            'sigma': '0.05',
-            'npar': '4',
-            'nsw': '1',
-            'ncore': '8',
-            'encut': '600',
-            'extras': ''
-        }
-        self.parameters.update(kwargs)
-    def setup_input_file(self):
-        """
-        Set up the VASP INCAR file for the relaxation simulation.
-        """
-        handler = LammpsInputFileHandler(self.template_file, self.output_file) 
-        handler.update_simulation_parameters(**self.parameters)
-        handler.generate_input_file()
-    def check_existing_results(self):
-        """
-        Check if the simulation directory already contains results.
-
-        :return: True if both OUTCAR and CONTCAR exist, False otherwise.
-        """
-        outcar_exists = os.path.exists(os.path.join(self.simulation_directory, "OUTCAR"))
-        contcar_exists = os.path.exists(os.path.join(self.simulation_directory, "CONTCAR"))
-        return outcar_exists and contcar_exists
+                return self.process_simulation_results()
+        else:
+            print(f"MISSING SUB SIMULATION RESULT")
+            return None
     def process_simulation_results(self):
-        """
-        Process the results of the relaxation simulation.
-        """
+        if(self.sub_simulations == {}):
+            return {}
+        print("sub sims: ", self.sub_simulations)
+        if('BaseRelaxation' in self.sub_simulations.keys()):
+            sim = self.sub_simulations['BaseRelaxation']
+            print("sim: ", sim)
+            print("result: ", sim.get_result())
+            cohesive_energy = sim.get_result()['cohesive_energy']
+            self.result = {
+                'cohesive_energy': cohesive_energy
+            }
+        return self.result
         
-        results = {}
-        return results
