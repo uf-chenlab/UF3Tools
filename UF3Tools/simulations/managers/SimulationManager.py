@@ -36,6 +36,7 @@ class SimulationManager:
         if "Simulation" not in simulation_type:
             formatted_simulation_type += "Simulation"
         # Set up the simulation directory path
+        print(f'the fucking root directory is {self.root_directory}')
         self.simulation_dir = os.path.join(self.root_directory, formatted_simulation_type)
         print(f"simulation directory: {self.simulation_dir}")
 
@@ -111,6 +112,7 @@ class SimulationManager:
         
         :param file_name: The name of the simulation file to insert.
         """
+        print(f"FILENAME {file_name} FROM {os.getcwd()} IS BEING COPIED TO {self.simulation_dir}")
         # Check for subdirectories in the simulation directory
         subdirectories = [d for d in os.listdir(self.simulation_dir) if os.path.isdir(os.path.join(self.simulation_dir, d)) and not d.startswith('.')]
 

@@ -46,8 +46,11 @@ class LammpsSimulationFileManager(SimulationManager):
 
         :param potential_file: The path to the potential file.
         """
+        print("potentail file: ", potential_file)
+        print("cwd: ", os.getcwd())
         self.potential_file = potential_file
         self.register_simulation_file(potential_file)
+        print("cwd: ", os.getcwd())
         if isinstance(simulation, type):  # If `simulation` is a class, create an instance
             raise TypeError(f"Expected an instance of LammpsSimulation, but got a class {simulation}")
         simulation.set_potential_file(potential_file)

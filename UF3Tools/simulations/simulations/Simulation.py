@@ -41,6 +41,7 @@ class LammpsSimulation:
         os.chdir(self.original_directory)
         return result  
     def set_potential_file(self, potential_file):
+        print(f"setting potential file: {potential_file}, {os.getcwd()}")
         self.parameters['uf3_file'] = potential_file
         self.setup_input_file()
     
@@ -50,7 +51,8 @@ class LammpsSimulation:
         handler.update_simulation_parameters(**self.parameters)
         handler.generate_input_file()
         os.chdir(self.original_directory)
-    
+    def get_directory(self):
+        return self.simulation_directory
     def check_existing_results(self):
         if self.result != {}:
             return True

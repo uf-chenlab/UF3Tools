@@ -38,17 +38,19 @@ class ValidationManager:
         Run the validation process.
         """
         os.chdir(self.validation_folder_path)
+        print("validation folder path is: ", self.validation_folder_path)
         # determine the base simulations needed
         for validation in self.validations_to_run:
             print(f"validation to run: {validation}")
             req_list = self.validation_lut[validation].get_required_base_simulations()
-            if(req_list != []):
+            if(req_list != [] and req_list != None):
                 self.base_simulations_required.append(req_list)
             
         # set up and run our base simulations
         #combine the base simulations into a single list
         base_simulations = []
         for sublist in self.base_simulations_required:
+            print(f"sublist: {sublist}")
             base_simulations.extend(sublist)
         #remove duplicates
         base_simulations = list(set(base_simulations))
@@ -79,6 +81,7 @@ class ValidationManager:
         for validation in self.validations_to_run:
             print(f'running validation: {validation}')
             os.chdir(self.current_directory)
+            
             validation_class = self.validation_lut[validation](
                 self.potential_file,
                 self.lammps_model_file,
@@ -88,11 +91,12 @@ class ValidationManager:
                 **self.kwargs
             )
             required_base_simulations = validation_class.get_required_base_simulations()
-            if(required_base_simulations != []):
+            if(required_base_simulations != [] and required_base_simulations != None):
                 for base_simulation in required_base_simulations:
                     validation_class.get_simulation().set_sub_simulation(base_simulation.get_id(), self.base_simulation_objects[base_simulation.get_id()])
                     
             validation_class.retrieve_dft_result(os.path.join(self.validation_folder_path, self.dft_results_lut[validation]))   
+            os.chdir(self.validation_folder_path)
             result = validation_class.start_validation(overwrite=overwrite, local=local)  
             print(f"Validation: {validation} - Percent Error: {result}")
         os.chdir(self.current_directory)

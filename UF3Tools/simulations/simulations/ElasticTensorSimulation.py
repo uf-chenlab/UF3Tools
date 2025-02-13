@@ -5,10 +5,12 @@ from ..common.DFTDataParser import DFTDataParser
 from .Simulation import LammpsSimulation
 
 class ElasticTensorSimulation(LammpsSimulation):
+    simulation_type = "ElasticTensor"
+    result_type = "elastic_tensor"
     def __init__(self, simulation_directory, template_directory, **kwargs):
-        self.template_file = template_directory + "in.elastic"
+        self.template_file_name = 'in.elastic'
         self.original_directory = os.getcwd()
-        self.simulation_directory = simulation_directory
+        self.simulation_directory = os.path.join(simulation_directory, (self.simulation_type+'Simulation'))
         self.output_file = os.path.join(simulation_directory, "lammps.in")
         self.parameters = {
             'atom_style': 'atomic',
@@ -24,18 +26,7 @@ class ElasticTensorSimulation(LammpsSimulation):
             'maxeval': '50000'
         }
         self.parameters.update(kwargs)
-        self.lattice_parameters = {}
-        super().__init__(simulation_directory, template_directory, 'in.elastic', "lammps.in", self.parameters, **kwargs)
-        
-    def check_existing_results(self):
-        """
-        Check if the simulation directory already contains results.
-
-        :return: True if both OUTCAR and CONTCAR exist, False otherwise.
-        """
-        results_exists = os.path.exists(os.path.join(self.simulation_directory, "results.txt"))
-        return results_exists
-    
+        super().__init__(self.simulation_directory, os.path.join(template_directory, (self.simulation_type + 'Simulation')), self.template_file_name, "lammps.in", self.parameters, **kwargs)
     def process_simulation_results(self):
         #initialize 
         lammps_data = {

@@ -55,8 +55,10 @@ class PotentialValidation:
         self.lammps_results = []
     def initialize_simulation_files(self):
         os.chdir(self.original_directory)
+        print("POTENTIAL VALIDATION IS IN :", os.getcwd())
         self.lammps_manager.set_potential_file(self.potential_file, self.simulation)
         self.lammps_manager.set_model_file(self.lammps_model_file)
+        os.chdir(self.simulation.get_directory())
     def get_simulation(self):
         return self.simulation
     def start_validation(self, overwrite=True, local=False):
@@ -64,10 +66,7 @@ class PotentialValidation:
         Start the validation process by running the LAMMPS and DFT simulations and comparing results.
         """
         if self.lammps_results == []:
-            os.chdir(self.original_directory)
-            self.lammps_manager.set_potential_file(self.potential_file, self.simulation)
-            self.lammps_manager.set_model_file(self.lammps_model_file)
-            os.chdir(self.root_directory)
+            #self.initialize_simulation_files()
             self.lammps_results = self.simulation.run(overwrite=overwrite, local=local)
         print(f"lammps results: {self.lammps_results}")
         # Proceed if both LAMMPS and DFT data are available (either newly run or from stored data)

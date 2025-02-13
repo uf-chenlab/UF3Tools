@@ -25,6 +25,7 @@ class LatticeConstantValidation(PotentialValidation):
         
         self.lammps_manager.setup_simulation(self.simulation_type)
         self.simulation = LatticeConstantSimulation(self.lammps_manager.get_root_directory(), self.lammps_manager.get_template_directory(), None, **kwargs)
+        print("my root directory is: ", self.lammps_manager.get_root_directory())
         self.required_base_simulations = self.simulation.get_required_sub_simulations()
         self.initialize_simulation_files()
     def retrieve_dft_result(self, path):

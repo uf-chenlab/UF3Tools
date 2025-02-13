@@ -16,6 +16,8 @@ class BaseRelaxationSimulation(BaseSimulation):
         self.template_file = template_directory + "in.base_relax"
         self.original_directory = os.getcwd()
         self.simulation_directory = os.path.join(simulation_directory, (self.simulation_type+'Simulation'))
+        print("simulation directory: ", self.simulation_directory)
+        print("pased simulation directory: ",simulation_directory)
         self.output_file = os.path.join(simulation_directory, "lammps.in")
         self.parameters = {
             'atom_style': 'atomic',
@@ -36,9 +38,6 @@ class BaseRelaxationSimulation(BaseSimulation):
         self.parameters.update(kwargs)
         super().__init__(simulation_directory, os.path.join(template_directory, (self.simulation_type + 'Simulation')), "in.base_relax", "lammps.in", self.parameters, **kwargs)
         self.cohesive_energy = {}
-    
-    def check_existing_results(self):
-        return super().check_existing_results()
     
     def get_result(self):
         if(self.result != {}):
