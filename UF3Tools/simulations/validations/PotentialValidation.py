@@ -2,23 +2,25 @@ import os
 import shutil 
 import numpy as np
 from ..managers.DFTSimulationManager import DFTSimulationManager
-from ..managers.LammpsSimulationManager import LammpsSimulationManager   
+from ..managers.LammpsSimulationFileManager import LammpsSimulationFileManager   
+from ..simulations.Simulation import LammpsSimulation
 from ..common.DFTDataParser import DFTDataParser
 import ast
 
 class PotentialValidation:
     computational_weight = 0
     required_base_simulations = []
+    simulation = None
     
     @classmethod
-    def get_computational_weight(self):
-        return self.computational_weight
+    def get_computational_weight(cls):
+        return cls.computational_weight
     
     @classmethod
-    def get_required_base_simulations(self):
-        return self.required_base_simulations
+    def get_required_base_simulations(cls):
+        return cls.required_base_simulations
     
-    def __init__(self, potential_file, lammps_model_file, dft_model_file, element_list, root_directory, use_dft=False):
+    def __init__(self, simulation_type, potential_file, lammps_model_file, dft_model_file, element_list, root_directory, use_dft=False):
         #initialize variables
         print("potentialvalidation init")
         self.potential_file = potential_file
@@ -33,7 +35,8 @@ class PotentialValidation:
         print("use dft: ", self.use_dft)
         self.has_dft_data = False
         
-        self.simulation_type = None
+        self.simulation_type = simulation_type
+        self.simulation = None
         print("variables set up")
         
         #initialize folder structures
@@ -46,18 +49,18 @@ class PotentialValidation:
         print("printing root directory")
         print(self.root_directory)
         #initialize simulation managers
-        self.lammps_manager = LammpsSimulationManager()
+        self.lammps_manager = LammpsSimulationFileManager()
         self.dft_manager = DFTSimulationManager()
         self.dft_result = {}
         self.lammps_results = []
-        
-    
+    def get_simulation(self):
+        return self.simulation
     def start_validation(self, overwrite=True, local=False):
         """
         Start the validation process by running the LAMMPS and DFT simulations.
         """
         if(self.lammps_results == []):
-            self.lammps_results = self.lammps_manager.start_simulation(overwrite=overwrite, local=local)
+            self.lammps_results = self.simulation.run_simulation()
         
         # Initialize DFT results
         dft_results = None
@@ -93,29 +96,13 @@ class PotentialValidation:
             return self.lammps_results
         else:
             raise ValueError("LAMMPS or DFT results are missing.")
-    def retrieve_dft_result(self, simulation_type, data_type, path):
-        if simulation_type == "lattice_constant":
-            parser = DFTDataParser(path)
-            self.dft_result[data_type] = parser.get_lattice_constants()
-        elif simulation_type == "surface_energy":
-            parser = DFTDataParser(path)
-            self.dft_result[data_type] = parser.process_surface_energy()
-        elif simulation_type == "elastic_tensor":
-            parser = DFTDataParser(path)
-            self.dft_result[data_type] = parser.get_elastic_tensor(path)
-        elif simulation_type == "cohesive_energy":
-            parser = DFTDataParser(path)
-            self.dft_result[data_type] = parser.get_cohesive_energy(path)
-        else:
-            raise ValueError(f"Simulation type '{simulation_type}' is not supported.")
-        self.has_dft_data = True
-        self.simulation_type = simulation_type
-    def retrieve_lammps_result(self, simulation_type, data_type):
-        self.lammps_manager.setup_simulation(data_type, **self.kwargs)
-        result = self.lammps_manager.retrieve_results()
-        self.lammps_results.append(result)
-        return self.lammps_results
-            
+    def retrieve_dft_result(self, path):
+        # subclass should implement this
+        raise NotImplementedError("Subclasses should implement this method")
+    def retrieve_lammps_result(self):
+        return self.simulation.get_result()
+    def import_base_simulations(self, simulations):
+        self.base_results = simulations      
 
 class ValidationData:
     def __init__(self, potential_version, potential_file, structure):
@@ -123,6 +110,7 @@ class ValidationData:
         self.potential_file = potential_file
         self.structure = structure
         self.validation_data = {}
+        self.normalized_error = None
     def add_validation(self, validation_type, validation_results):
         self.validation_data[validation_type] = validation_results
     def get_potential_version(self):
@@ -133,9 +121,14 @@ class ValidationData:
         return self.potential_file
     def getValidation(self, validation_type):
         return self.validation_data.get(validation_type, None)
+    def set_normalized_error(self, error):
+        self.normalized_error = error
+    def get_normalized_error(self):
+        return self.normalized_error
     def __str__(self):
         output = f"Potential version: {self.potential_version}\n"
         output += f"Structure: {self.structure}\n"
+        output += f'Normalized error: {self.normalized_error}\n'
         for validation_type, validation_results in self.validation_data.items():
             output += f"{validation_type} validation results:\n"
             # Check if validation_results is a list of dictionaries

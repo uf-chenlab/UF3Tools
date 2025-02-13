@@ -29,19 +29,19 @@ class ElasticTensorValidation(PotentialValidation):
             "shear_modulus_hill": None,
         }
         self.use_dft = False
-        super().__init__(potential_file, lammps_model_file, dft_model_file, element_list,  validation_folder_path,use_dft=False)
+        super().__init__("elastic_tensor", potential_file, lammps_model_file, dft_model_file, element_list,  validation_folder_path,use_dft=False)
         
     def initialize_simulation_files(self):
-        self.lammps_manager.setup_simulation("elastic_tensor", **self.kwargs)
+        self.lammps_manager.setup_simulation("elastic_tensor")
         os.chdir(self.original_directory)
-        self.lammps_manager.set_potential_file(self.potential_file)
+        self.lammps_manager.set_potential_file(self.potential_file, self.simulation)
         self.lammps_manager.set_model_file(self.lammps_model_file)
     def start_validation(self, overwrite=True, local=False):
         """
         Start the validation process by running the LAMMPS and DFT simulations and comparing results.
         """
         if self.lammps_results == []:
-            self.lammps_manager.set_potential_file(self.potential_file)
+            self.lammps_manager.set_potential_file(self.potential_file, self.simulation)
             self.lammps_manager.set_model_file(self.lammps_model_file)
             self.lammps_results = self.lammps_manager.start_simulation(overwrite=overwrite, local=local)
 

@@ -1,6 +1,7 @@
 import glob
 import os
 import pandas as pd
+from UF3Tools.simulations.managers.ValidationManager import ValidationManager
 import numpy as np
 import matplotlib.pyplot as plt
 from uf3.data import io
@@ -1773,12 +1774,14 @@ class ModelAnalyzer:
             modifier = LAMMPSModifier(lammps_file)
             lammps_file_big = modifier.generate_supercell((15,15,15))
             print("potential validation")
+            manager = ValidationManager(potential_file, lammps_file_big, dft_file, element_list_str, validation_folder_path, validations_to_run)
+            manager.run_validation()
             # Lattice Constant Validation
             if validations_to_run.get("lattice_constant", False):
                 lattice_constant = LatticeConstantValidation(potential_file, lammps_file, dft_file, element_list_str, validation_folder_path)
                 lattice_constant.initialize_simulation_files()
                 dft_lattice_path = os.path.join(validation_folder_path, "dft/simulations/RelaxationSimulation/")
-                lattice_constant.retrieve_dft_result("lattice_constant", "lattice_constant", dft_lattice_path)
+                lattice_constant.retrieve_dft_result(dft_lattice_path)
                 lattice_percent_error = lattice_constant.start_validation(overwrite=True, local=False)
                 data.add_validation("lattice_constant", lattice_percent_error)
             os.chdir(current_directory)
@@ -1787,7 +1790,7 @@ class ModelAnalyzer:
                 cohesive_energy = CohesiveEnergyValidation(potential_file, lammps_file, dft_file, element_list_str, validation_folder_path)
                 cohesive_energy.initialize_simulation_files()
                 dft_cohesive_energy_path = os.path.join(validation_folder_path, "dft/simulations/CohesiveEnergySimulation/results.txt")
-                cohesive_energy.retrieve_dft_result("cohesive_energy", "cohesive_energy", dft_cohesive_energy_path)
+                cohesive_energy.retrieve_dft_result(dft_cohesive_energy_path)
                 cohesive_energy_percent_error = cohesive_energy.start_validation(overwrite=True, local=False)
                 data.add_validation("cohesive_energy", cohesive_energy_percent_error)
             os.chdir(current_directory)
@@ -1796,7 +1799,7 @@ class ModelAnalyzer:
                 tensor = ElasticTensorValidation(potential_file, lammps_file, dft_file, element_list_str, validation_folder_path)
                 tensor.initialize_simulation_files()
                 dft_tensor_path = os.path.join(validation_folder_path, "dft/simulations/ElasticTensor/results.txt")
-                tensor.retrieve_dft_result("elastic_tensor", "elastic_tensor", dft_tensor_path)
+                tensor.retrieve_dft_result(dft_tensor_path)
                 tensor_percent_error = tensor.start_validation(overwrite=True, local=False)
                 data.add_validation("elastic_tensor", tensor_percent_error)
             os.chdir(current_directory)
@@ -1805,7 +1808,7 @@ class ModelAnalyzer:
                 surface_energy = SurfaceEnergyValidation(potential_file, lammps_file_big, dft_file, element_list_str, validation_folder_path)
                 surface_energy.initialize_simulation_files()
                 dft_surface_energy_path = os.path.join(validation_folder_path, "dft/simulations/SurfaceEnergySimulation/")
-                surface_energy.retrieve_dft_result("surface_energy", "surface_energy", dft_surface_energy_path)
+                surface_energy.retrieve_dft_result(dft_surface_energy_path)
                 surface_energy_percent_error = surface_energy.start_validation(overwrite=True, local=False)
                 data.add_validation("surface_energy", surface_energy_percent_error)
             os.chdir(current_directory)

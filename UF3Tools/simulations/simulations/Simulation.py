@@ -1,10 +1,12 @@
 import os 
-import shutil
-import re
+import subprocess
 from ..common.LammpsInputFileHandler import LammpsInputFileHandler
 from ..common.DFTDataParser import DFTDataParser
 
 class LammpsSimulation:
+    @classmethod
+    def get_id(cls):
+        return cls.simulation_type
     def __init__(self, 
                  simulation_directory, 
                  template_directory, 
@@ -15,19 +17,34 @@ class LammpsSimulation:
         self.template_file = os.path.join(template_directory, template_file)
         self.original_directory = os.getcwd()
         self.simulation_directory = simulation_directory
+        print(f"LAMMPSSimulation directory: {self.simulation_directory}")
         self.output_file = os.path.join(simulation_directory, output_file)
         self.parameters = parameters or {}
         self.parameters.update(kwargs)
         self.result = {}
-        
+        self.simulation_type = ""
+        self.setup_input_file()
+    def run_simulation(self, local=False, overwrite=False):
+        print(f"running simulation: {self.simulation_directory}")
+        os.chdir(self.simulation_directory)
+        if(local == True):
+            command = "chmod 777 startSimulation.sh && ./startSimulation.sh"
+        else:
+            command = "chmod 777 start_simulation_hpg.sh && ./start_simulation_hpg.sh"
+        subprocess.run(command, shell=True,stdout=subprocess.DEVNULL)
+        result = self.process_simulation_results()
+        os.chdir(self.original_directory)
+        return result  
     def set_potential_file(self, potential_file):
         self.parameters['uf3_file'] = potential_file
         self.setup_input_file()
     
     def setup_input_file(self):
+        os.chdir(self.simulation_directory)
         handler = LammpsInputFileHandler(self.template_file, self.output_file)
         handler.update_simulation_parameters(**self.parameters)
         handler.generate_input_file()
+        os.chdir(self.original_directory)
     
     def check_existing_results(self):
         if self.result != {}:
@@ -38,7 +55,8 @@ class LammpsSimulation:
         else:
             print("No simulation results!")
             return {}
-
+    def run(self, lammps_manager):
+        self.results = lammps_manager.run_simulation(self)
     
     def process_simulation_results(self):
         raise NotImplementedError("Subclasses must implement this method")
@@ -64,6 +82,10 @@ class BaseSimulation(LammpsSimulation):
     
     
 class CompoundSimulation(LammpsSimulation):
+    required_sub_simulations = []
+    @classmethod
+    def get_required_sub_simulations(cls):
+        return cls.required_sub_simulations
     def __init__(self, 
                  simulation_directory, 
                  template_directory, 
@@ -75,11 +97,8 @@ class CompoundSimulation(LammpsSimulation):
         
         super().__init__(simulation_directory, template_directory, template_file, output_file, parameters, **kwargs)
         self.sub_simulations = sub_simulations or {}
-        self.required_sub_simulations = []
     def process_simulation_results(self):
         raise NotImplementedError("Subclasses must implement this method")
-    def get_required_sub_simulations(self):
-        return self.required_sub_simulations
     def get_sub_simulation(self, simulation_type):
         return self.sub_simulations.get(simulation_type, None)
     def get_sub_simulations(self):

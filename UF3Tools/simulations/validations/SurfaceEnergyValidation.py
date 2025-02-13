@@ -10,7 +10,7 @@ class SurfaceEnergyValidation(PotentialValidation):
         self.kwargs = self.default_kwargs
         self.kwargs.update(kwargs)
         lammps_model_file = self.modify_lammps_model_file(lammps_model_file)
-        super().__init__(potential_file, lammps_model_file, dft_model_file, element_list,validation_folder_path)
+        super().__init__("surface_energy", potential_file, lammps_model_file, dft_model_file, element_list,validation_folder_path)
 
     def modify_lammps_model_file(self, lammps_model_file):
         original = lammps_model_file
@@ -20,14 +20,14 @@ class SurfaceEnergyValidation(PotentialValidation):
         Initialize the simulation files needed for the potential file.
         """
         # LAMMPS SETUP
-        self.lammps_manager.setup_simulation("surface_energy", **self.kwargs)
+        self.lammps_manager.setup_simulation("surface_energy")
         os.chdir(self.original_directory)
         print("looking for potential file in: ", self.original_directory)
-        self.lammps_manager.set_potential_file(self.potential_file)
+        self.lammps_manager.set_potential_file(self.potential_file, self.simulation)
         self.lammps_manager.set_model_file(self.lammps_model_file)
         
         #DFT SETUP
-        self.dft_manager.setup_simulation("surface_energy", ncore=2)
+        self.dft_manager.setup_simulation("surface_energy")
         self.dft_manager.set_model_file(self.dft_model_file)
         self.dft_manager.perform_model_modification()
         

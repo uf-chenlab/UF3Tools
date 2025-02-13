@@ -14,8 +14,8 @@ class LangevinValidation(PotentialValidation):
         Initialize the simulation files needed for the potential file.
         """
         # LAMMPS SETUP
-        self.lammps_manager.setup_simulation("langevin", **self.kwargs)
+        self.lammps_manager.setup_simulation("langevin")
         os.chdir(self.original_directory)
-        self.lammps_manager.set_potential_file(self.potential_file)
+        self.lammps_manager.set_potential_file(self.potential_file, self.simulation)
         self.lammps_manager.set_model_file(self.lammps_model_file)
   

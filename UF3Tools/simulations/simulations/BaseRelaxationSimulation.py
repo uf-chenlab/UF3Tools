@@ -5,6 +5,7 @@ from ..common.LammpsInputFileHandler import LammpsInputFileHandler
 from ..common.DFTDataParser import DFTDataParser
 
 class BaseRelaxationSimulation(BaseSimulation):
+    simulation_type = "BaseRelaxation"
     def __init__(self, simulation_directory, template_directory, **kwargs):
         """
         Initialize the RelaxationSimulation with a simulation directory and any additional parameters.
@@ -12,10 +13,9 @@ class BaseRelaxationSimulation(BaseSimulation):
         :param simulation_directory: The directory where the relaxation simulation will be set up.
         :param kwargs: Additional parameters for setting up the simulation.
         """
-        
-        self.template_file = template_directory + "in.cohesive"
+        self.template_file = template_directory + "in.base_relax"
         self.original_directory = os.getcwd()
-        self.simulation_directory = simulation_directory
+        self.simulation_directory = os.path.join(simulation_directory, (self.simulation_type+'Simulation'))
         self.output_file = os.path.join(simulation_directory, "lammps.in")
         self.parameters = {
             'atom_style': 'atomic',
@@ -34,11 +34,17 @@ class BaseRelaxationSimulation(BaseSimulation):
             'maxeval': '50000'
         }
         self.parameters.update(kwargs)
-        super().__init__(simulation_directory, template_directory, 'in.bulk_base', "lammps.in", self.parameters, **kwargs)
+        super().__init__(simulation_directory, os.path.join(template_directory, (self.simulation_type + 'Simulation')), "in.base_relax", "lammps.in", self.parameters, **kwargs)
         self.cohesive_energy = {}
     
     def check_existing_results(self):
         return super().check_existing_results()
+    
+    def get_result(self):
+        if(self.result != {}):
+            return self.result
+        else:
+            return self.process_simulation_results()
         
     def process_simulation_results(self):
         self.results = {}
@@ -78,14 +84,14 @@ class BaseRelaxationSimulation(BaseSimulation):
 
             if energy_match:
                 energy = float(energy_match.group(1))
-                results['potential_energy'] = energy
+                results['cohesive_energy'] = energy
             else:
                 print("Error: Surface energy could not be extracted. Please check the format of energy.txt.")
-                results['potential_energy'] = 999999
+                results['cohesive_energy'] = 999999
 
             return results
 
         except:
             return {
-                "potential_energy": 999999
+                "cohesive_energy": 999999
             }
