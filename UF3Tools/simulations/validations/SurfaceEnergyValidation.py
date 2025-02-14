@@ -1,7 +1,14 @@
 from .PotentialValidation import *
+from ..simulations.SurfaceEnergySimulation import SurfaceEnergySimulation
 
 class SurfaceEnergyValidation(PotentialValidation):
-    def __init__(self, potential_file, lammps_model_file, dft_model_file, element_list, validation_folder_path, **kwargs):
+    @classmethod
+    def get_required_base_simulations(cls):
+        return None
+    computational_weight=1
+    def __init__(self, potential_file, lammps_model_file, dft_model_file, element_list, validation_folder_path,**kwargs):
+        self.simulation_type = "SurfaceEnergySimulation"
+        super().__init__(self.simulation_type, potential_file, lammps_model_file, dft_model_file, element_list,  validation_folder_path,use_dft=False)
         self.default_kwargs = {
             'min_style': 'cg',
             'uf3_elements': element_list
@@ -9,101 +16,67 @@ class SurfaceEnergyValidation(PotentialValidation):
         # Update the default keyword arguments with the user-specified arguments
         self.kwargs = self.default_kwargs
         self.kwargs.update(kwargs)
-        lammps_model_file = self.modify_lammps_model_file(lammps_model_file)
-        super().__init__("surface_energy", potential_file, lammps_model_file, dft_model_file, element_list,validation_folder_path)
-
-    def modify_lammps_model_file(self, lammps_model_file):
-        original = lammps_model_file
-        
-    def initialize_simulation_files(self):
+        self.dft_data = {
+            "bulk_energy": None,
+            "slab_energy": None,
+            "surface_energy": None,
+        }
+        self.lammps_data = {
+            "bulk_energy": None,
+            "slab_energy": None,
+            "surface_energy": None,
+        }
+        self.use_dft = False
+        print("validation folder path in elastictensor: ", self.root_directory)
+        print("my root directory is: ", self.lammps_manager.get_root_directory())
+        print("my template directory is: ", self.lammps_manager.get_template_directory())
+        self.lammps_manager.setup_simulation(self.simulation_type)
+        self.simulation = SurfaceEnergySimulation(self.lammps_manager.get_root_directory(), self.lammps_manager.get_template_directory(), **kwargs)
+        self.initialize_simulation_files()
+    def retrieve_dft_result(self, path):
         """
-        Initialize the simulation files needed for the potential file.
+        Retrieve DFT results from the specified path.
         """
-        # LAMMPS SETUP
-        self.lammps_manager.setup_simulation("surface_energy")
-        os.chdir(self.original_directory)
-        print("looking for potential file in: ", self.original_directory)
-        self.lammps_manager.set_potential_file(self.potential_file, self.simulation)
-        self.lammps_manager.set_model_file(self.lammps_model_file)
-        
-        #DFT SETUP
-        self.dft_manager.setup_simulation("surface_energy")
-        self.dft_manager.set_model_file(self.dft_model_file)
-        self.dft_manager.perform_model_modification()
-        
-        os.chdir(self.root_directory)
-
+        print(f"looking for dft results in: {path}")
+        dft_parser = DFTDataParser(path)
+        self.dft_data = dft_parser.get_surface_energy(path)
+        print(f"surface energy: {self.dft_data}")
+        self.has_dft_data = True
     def start_validation(self, overwrite=True, local=False):
         """
-        Start the validation process by running the LAMMPS and DFT simulations.
+        Start the validation process by running the LAMMPS and DFT simulations and comparing results.
         """
-        if(self.lammps_results == []):
-            self.lammps_results = self.lammps_manager.start_simulation(overwrite=overwrite, local=local)
-        if(self.lammps_results == {} or self.lammps_results == []):
-            return {
-                'bulk_energy': 9999999,
-                'surface_energy': 9999999,
-                'free_energy': 999999  
-            }
+        if self.lammps_results == []:
+            os.chdir(self.original_directory)
+            self.lammps_manager.set_potential_file(self.potential_file, self.simulation)
+            self.lammps_manager.set_model_file(self.lammps_model_file)
+            os.chdir(self.root_directory)
+            self.lammps_results = self.simulation.run(overwrite=overwrite, local=local)
+            print(f"lammps results: {self.lammps_results}")
         percent_error = {}
-        if isinstance(self.lammps_results, list):
-            self.lammps_results = self.lammps_results[0]
-        area = (self.lammps_results['bulk_area'] + self.lammps_results['free_area'])/2
-        print("lammps results raw")
-        print(self.lammps_results)
-        surface_energy = (self.lammps_results['free_energy']/(2*self.lammps_results['free_area']) - self.lammps_results['bulk_energy']/(2*self.lammps_results['bulk_area']))
-        self.lammps_results.pop('bulk_area')
-        self.lammps_results.pop('free_area')
-        self.lammps_results['area'] = area
-        self.lammps_results['surface_energy'] = surface_energy  
-        print(self.lammps_results)
-        dft_results = self.dft_result
-        if isinstance(dft_results, list):
-            dft_results = dft_results[0]
-        dft_results['area'] = self.lammps_results['area']
-        
-
-        if self.use_dft and self.dft_result != {}:
-            dft_results = self.dft_manager.start_simulation(overwrite=overwrite, local=local)
-            dft_results['surface_energy'] = (dft_results['free'] - dft_results['bulk'])/(2*area)
-        else:
+        # Proceed if both LAMMPS and DFT data are available (either newly run or from stored data)
+        if self.lammps_results and ((self.use_dft and self.dft_data) or self.has_dft_data == True):
+            if self.has_dft_data:
+                dft_results = self.dft_data
+            print("dft results: ", dft_results)
+            dft_bulk = dft_results["bulk_energy"]
+            dft_slab = dft_results["slab_energy"]
+            dft_area = dft_results["area"]
+            # Initialize the dictionary for percent errors
+            percent_error = {}
+            print("lammps result: ", self.lammps_results)
+            # Compare the LAMMPS and DFT elastic tensors by calculating percent errors
+            if(isinstance(self.lammps_results, list)):
+                self.lammps_results = self.lammps_results[0]
+            lammps_bulk = self.lammps_results["bulk_energy"]
+            lammps_slab = self.lammps_results["slab_energy"]
+            lammps_area = self.lammps_results["bulk_area"]
             
-            array = dft_results['surface_energy']
-            print("dft array")
-            print(array)
-            dft_results['bulk'] = array[0]/(2*area)
-            dft_results['free'] = array[1]/(2*area)
-            dft_results['surface_energy'] = array[1]/(2*area) - array[0]/(2*area)
-            print(dft_results['surface_energy'])
-        
-
-        try:
-            #print(f"lammps {lammps_results['bulk_energy']} ; area: {2 * lammps_results['area']} ; dft {dft_results['bulk']}")
-            percent_error['bulk_energy'] = abs(
-                (self.lammps_results['bulk_energy'] /(2* self.lammps_results['area'])) - 
-                (dft_results['bulk'])
-            ) / abs((dft_results['bulk']) )* 100
-        except ZeroDivisionError as e:
-            percent_error['bulk_energy'] = None
-            print(f"Error calculating percent error for 'bulk_energy': {e}")
-
-        try:
-            percent_error['free_energy'] = abs(
-                (self.lammps_results['free_energy'] /( self.lammps_results['area']*2)) - 
-                (dft_results['free'])
-            ) / abs((dft_results['free']) )* 100
-        except ZeroDivisionError as e:
-            percent_error['free_energy'] = None
-            print(f"Error calculating percent error for 'free_energy': {e}")
-
-        # Calculate percent error for surface energy
-        try:
-            percent_error['surface_energy'] = abs(
-                self.lammps_results['surface_energy'] - dft_results['surface_energy']
-            ) / abs(dft_results['surface_energy'] )* 100
-        except ZeroDivisionError as e:
-            percent_error['surface_energy'] = None
-            print(f"Error calculating percent error for 'surface_energy': {e}")
+            lammps_surface_energy = (lammps_slab - lammps_bulk) / (2*lammps_area)
+            dft_surface_energy = (dft_slab - dft_bulk) / (2*dft_area)
+            percent_error['bulk_energy'] = self.calculate_percent_error(dft_bulk, lammps_bulk)
+            percent_error['slab_energy'] = self.calculate_percent_error(dft_slab, lammps_slab)
+            percent_error['surface_energy'] = self.calculate_percent_error(dft_surface_energy, lammps_surface_energy)
 
         return percent_error
     

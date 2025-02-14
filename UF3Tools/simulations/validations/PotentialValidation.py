@@ -89,7 +89,7 @@ class PotentialValidation:
                         lammps_value = self.lammps_results[key]
 
                         if dft_value != 0:  # Prevent division by zero
-                            percent_error[key] = abs((lammps_value - dft_value) / dft_value) * 100
+                            percent_error[key] = self.calculate_percent_error(dft_value, lammps_value)
                         else:
                             percent_error[key] = None  # Handle zero-division case
                         
@@ -110,6 +110,12 @@ class PotentialValidation:
         return self.simulation.get_result()
     def import_base_simulations(self, simulations):
         self.base_results = simulations      
+    def calculate_percent_error(self, dft_data, lammps_data):
+        if dft_data == 0 or dft_data == None:
+            return None
+        if lammps_data == None:
+            return None
+        return abs(abs(lammps_data - dft_data) / dft_data) * 100
 
 class ValidationData:
     def __init__(self, potential_version, potential_file, structure):

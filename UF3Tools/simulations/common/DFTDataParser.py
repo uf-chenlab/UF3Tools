@@ -3,6 +3,7 @@ import re
 import shutil
 import numpy as np
 from pymatgen.io.vasp import Poscar, Outcar
+from pymatgen.core import Structure
 from pymatgen.core import Element
 
 class DFTDataParser:
@@ -38,32 +39,50 @@ class DFTDataParser:
             'gamma': gamma
         }
         return lattice_parameters
-    def process_surface_energy(self):
+    def read_result_file(self, result_file, pattern):
+        results = {}
+        try:
+            with open(result_file, 'r') as f:
+                lines = f.read()
+            match = re.search(pattern, lines)
+            return match
+        except:
+            print(f"Error: Could not open file {result_file}")
+            return None
+    def get_surface_energy(self, path):
         """
         Calculate the surface energy by subtracting the final energy of the
         bulk simulation from the free surface simulation.
 
         :return: Surface energy in eV
         """
-        # Define paths to the required subfolders
-        bulk_simulation_path = os.path.join(self.directory, "DFTSurfaceEnergyBulkSimulation")
-        free_simulation_path = os.path.join(self.directory, "DFTSurfaceEnergyFreeSimulation")
-
-        # Check that both required subfolders exist
-        if not os.path.exists(bulk_simulation_path):
-            raise FileNotFoundError(f"Bulk simulation folder not found: {bulk_simulation_path}")
-
-        if not os.path.exists(free_simulation_path):
-            raise FileNotFoundError(f"Free surface simulation folder not found: {free_simulation_path}")
 
         # Get the energies from the respective OUTCAR files
-        bulk_energy = self.get_energy(os.path.join(bulk_simulation_path, "OUTCAR"))
-        free_energy = self.get_energy(os.path.join(free_simulation_path, "OUTCAR"))
+        bulk_energy_path = os.path.join(path, "bulk_energy.txt")
+        slab_energy_path = os.path.join(path, "slab_energy.txt")
+        contcar_path = os.path.join(path, "CONTCAR")
+        energy_pattern = r'total\s*energy\s*=\s*([-.\d]+)'
+        bulk_match = self.read_result_file(bulk_energy_path, energy_pattern)
+        bulk_energy = float(bulk_match.group(1))
+        slab_match = self.read_result_file(slab_energy_path, energy_pattern)
+        slab_energy = float(slab_match.group(1))
+        structure = Structure.from_file(contcar_path)
+        lattice = structure.lattice.matrix
+        a_vector = lattice[0]
+        b_vector = lattice[1]
+        area = np.linalg.norm(np.cross(a_vector, b_vector))
+        
         print("Bulk Energy: ", bulk_energy)
-        print("Free Energy: ", free_energy)
+        print("Free Energy: ", slab_energy)
+        print("Area: ", area)
         # Calculate the surface energy
-        surface_energy = free_energy - bulk_energy
-        array = [bulk_energy, free_energy, surface_energy]
+        surface_energy = (slab_energy - bulk_energy)/area
+        array = {
+            "bulk_energy": bulk_energy,
+            "slab_energy": slab_energy,
+            "surface_energy": surface_energy,
+            "area": area
+        }
         return array
     def get_energy(self, filename=None):
         """

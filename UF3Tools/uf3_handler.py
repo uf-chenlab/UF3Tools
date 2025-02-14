@@ -1772,7 +1772,7 @@ class ModelAnalyzer:
             data = ValidationData(potential_version, potential_file, structure_id)
             lammps_file_ori = lammps_file
             modifier = LAMMPSModifier(lammps_file)
-            lammps_file_big = modifier.generate_supercell((1,1,1))
+            lammps_file_big = modifier.generate_supercell((4,4,4))
             print("potential validation")
             manager = ValidationManager(potential_file, lammps_file_big, dft_file, element_list_str, validation_folder_path, validations_to_run)
             manager.run_validation()

@@ -8,7 +8,6 @@ class ElasticTensorValidation(PotentialValidation):
     computational_weight=2
     def __init__(self, potential_file, lammps_model_file, dft_model_file, element_list, validation_folder_path,**kwargs):
         self.simulation_type = "ElasticTensorSimulation"
-        print("validation folder path in elastictensor: ", validation_folder_path)
         super().__init__(self.simulation_type, potential_file, lammps_model_file, dft_model_file, element_list,  validation_folder_path,use_dft=False)
         self.default_kwargs = {
             'min_style': 'cg',
@@ -95,8 +94,7 @@ class ElasticTensorValidation(PotentialValidation):
 
                 # Calculate percent error if both LAMMPS and DFT values exist
                 if lammps_value is not None and dft_value is not None:
-                    error = abs(lammps_value - dft_value) / dft_value * 100
-                    percent_error[key] = error
+                    percent_error[key] = self.calculate_percent_error(dft_value, lammps_value)
 
             # Compare bulk moduli and shear moduli
             def calculate_modulus_error(lammps_modulus, dft_modulus, name):
@@ -105,14 +103,13 @@ class ElasticTensorValidation(PotentialValidation):
                     percent_error[name] = error
             
             # Bulk moduli comparison
-            calculate_modulus_error(self.lammps_results.get("bulk_modulus_voigt"), dft_results.get("bulk_modulus_voigt"), "bulk_modulus_voigt")
-            calculate_modulus_error(self.lammps_results.get("bulk_modulus_reuss"), dft_results.get("bulk_modulus_reuss"), "bulk_modulus_reuss")
-            calculate_modulus_error(self.lammps_results.get("bulk_modulus_hill"), dft_results.get("bulk_modulus_hill"), "bulk_modulus_hill")
-
-            # Shear moduli comparison
-            calculate_modulus_error(self.lammps_results.get("shear_modulus_voigt"), dft_results.get("shear_modulus_voigt"), "shear_modulus_voigt")
-            calculate_modulus_error(self.lammps_results.get("shear_modulus_reuss"), dft_results.get("shear_modulus_reuss"), "shear_modulus_reuss")
-            calculate_modulus_error(self.lammps_results.get("shear_modulus_hill"), dft_results.get("shear_modulus_hill"), "shear_modulus_hill")
+            percent_error['bulk_modulus_voigt'] = self.calculate_percent_error(dft_results["bulk_modulus_voigt"], self.lammps_results["bulk_modulus_voigt"])
+            percent_error['bulk_modulus_reuss'] = self.calculate_percent_error(dft_results["bulk_modulus_reuss"], self.lammps_results["bulk_modulus_reuss"])
+            percent_error['bulk_modulus_hill'] = self.calculate_percent_error(dft_results["bulk_modulus_hill"], self.lammps_results["bulk_modulus_hill"])
+            #shear moduli comparison
+            percent_error['shear_modulus_voigt'] = self.calculate_percent_error(dft_results["shear_modulus_voigt"], self.lammps_results["shear_modulus_voigt"])
+            percent_error['shear_modulus_reuss'] = self.calculate_percent_error(dft_results["shear_modulus_reuss"], self.lammps_results["shear_modulus_reuss"])
+            percent_error['shear_modulus_hill'] = self.calculate_percent_error(dft_results["shear_modulus_hill"], self.lammps_results["shear_modulus_hill"])
             
             return percent_error
 
