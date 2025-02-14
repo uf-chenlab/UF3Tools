@@ -4,6 +4,7 @@ from ..validations.ElasticTensorValidation import ElasticTensorValidation
 from ..validations.LangevinValidation import LangevinValidation
 from ..validations.LatticeConstantValidation import LatticeConstantValidation
 from ..validations.SurfaceEnergyValidation import SurfaceEnergyValidation
+from ..validations.PotentialValidation import ValidationData
 from .LammpsSimulationFileManager import LammpsSimulationFileManager
 
 class ValidationManager:
@@ -31,8 +32,10 @@ class ValidationManager:
         self.base_simulations_required = []
         self.base_results = {}
         self.base_simulation_objects = {}
+        self.validation_data = ValidationData()
         self.current_directory = os.getcwd()
-
+    def get_validation_data():
+        return self.validation_data
     def run_validation(self, overwrite=True, local=False):
         """
         Run the validation process.
@@ -99,5 +102,7 @@ class ValidationManager:
             os.chdir(self.validation_folder_path)
             result = validation_class.start_validation(overwrite=overwrite, local=local)  
             print(f"Validation: {validation} - Percent Error: {result}")
+            self.validation_data.add_validation(validation, result)
         os.chdir(self.current_directory)
+        return self.validation_data
             
