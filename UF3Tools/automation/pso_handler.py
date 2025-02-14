@@ -282,7 +282,6 @@ def train_with_preloaded_data(params, settings, trial_id=0):
     print("export model to lammps")
 
     try:
-        print("lick my balls")
         validations_to_run = {
             "lattice_constant": True,
             "cohesive_energy": True,
@@ -290,7 +289,6 @@ def train_with_preloaded_data(params, settings, trial_id=0):
             "surface_energy": False
         }
         validation_data = analyzer.validate_potential(potential_label, model_filename, settings['element_list'], validations_to_run)
-        print("potential validated")
     except Exception as e:
         print(f"Validation error: {str(e)}")
         return {"status": "failed", "error": f"Validation error: {str(e)}"}

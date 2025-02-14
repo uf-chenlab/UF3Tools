@@ -1688,14 +1688,11 @@ class ModelAnalyzer:
             if test_name not in test_mapping:
                 print(f"Invalid test name: {test_name}")
                 return None
-            print("licky balls")
             # Execute the specified test
             print(f"Running test: {test_mapping[test_name]}")
             validation_class = test_mapping[test_name]
             validation_instance = validation_class(potential_file, lammps_file, dft_file, element_list_str, validation_folder_path)
-            print("class initialized")
             validation_instance.initialize_simulation_files()
-            print("simulation files init")
             # Map test names to their respective DFT result paths
             dft_paths = {
                 "lattice_constant": os.path.join(validation_folder_path, "dft/simulations/RelaxationSimulation/"),
@@ -1718,7 +1715,15 @@ class ModelAnalyzer:
             os.chdir(current_directory)
 
         return datas
-    
+    def calculate_normalized_error(self, prediction_data):
+        rmse_e = prediction_data["rmse_e"]
+        rmse_f = prediction_data["rmse_f"]
+        std_e = np.std(self.prediction_data["y_e"])
+        std_f = np.std(self.prediction_data["y_f"])
+        # Calculate normalized RMSE
+        normalized_rmse = (rmse_e / std_e + rmse_f / std_f) / 2
+        return normalized_rmse
+        
     def validate_potential(self, potential_version, potential_file, element_list, validations_to_run=None):
         """
         Validate the potential dynamically using LAMMPS and DFT files 
@@ -1741,13 +1746,11 @@ class ModelAnalyzer:
                 "elastic_tensor": True,
                 "surface_energy": True
             }
-        print("validate potential entry2")
 
         for structure in self.dft_validation_structures:
             if "POSCAR" in structure or "LAMMPS" in structure:
                 print(f"Skipping structure containing POSCAR or LAMMPS: {structure}")
                 continue
-            print("validate for loop")
             # Extract the Materials Project ID from the structure name
             structure_id = structure.replace("mp-", "")
             validation_folder_path = os.path.join(current_directory, "validation/structures", structure)
@@ -1769,14 +1772,16 @@ class ModelAnalyzer:
             element_list_str = " ".join(element_list)
 
             # Initialize ValidationData
-            data = ValidationData(potential_version, potential_file, structure_id)
             lammps_file_ori = lammps_file
             modifier = LAMMPSModifier(lammps_file)
             lammps_file_big = modifier.generate_supercell((4,4,4))
-            print("potential validation")
-            manager = ValidationManager(potential_file, lammps_file_big, dft_file, element_list_str, validation_folder_path, validations_to_run)
-            manager.run_validation()
-            manager.get_validation_data()
+            manager = ValidationManager(potential_version, structure_id, potential_file, lammps_file, dft_file, element_list_str, validation_folder_path, validations_to_run)
+            data = manager.run_validation()
+            os.chdir(current_directory)
+            normalized_error = self.calculate_normalized_error(self.test_model_prediction())
+            data.set_normalized_error(normalized_error)
+            # Append the validation data
+            datas.append(data)
             
             # Return to the initial directory after processing each structure
             os.chdir(current_directory)

@@ -11,6 +11,7 @@ class PotentialValidation:
     computational_weight = 0
     required_base_simulations = []
     simulation = None
+    requires_supercell = False
     
     @classmethod
     def get_computational_weight(cls):
@@ -19,6 +20,10 @@ class PotentialValidation:
     @classmethod
     def get_required_base_simulations(cls):
         return cls.required_base_simulations
+    
+    @classmethod
+    def requires_supercell(cls):
+        return cls.requires_supercell
     
     def __init__(self, simulation_type, potential_file, lammps_model_file, dft_model_file, element_list, root_directory, use_dft=False):
         #initialize variables

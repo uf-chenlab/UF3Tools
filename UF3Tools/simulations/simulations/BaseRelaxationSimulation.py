@@ -6,6 +6,7 @@ from ..common.DFTDataParser import DFTDataParser
 
 class BaseRelaxationSimulation(BaseSimulation):
     simulation_type = "BaseRelaxation"
+    requires_supercell = False
     def __init__(self, simulation_directory, template_directory, **kwargs):
         """
         Initialize the RelaxationSimulation with a simulation directory and any additional parameters.

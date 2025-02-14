@@ -4,6 +4,7 @@ import re
 import subprocess
 import os
 import sys
+import time
 
 class SimulationManager:
     def __init__(self, parent_directory):
@@ -27,8 +28,7 @@ class SimulationManager:
         Set up a simulation directory and call the create_simulation method.
         """
         
-        print(f"simulation manager: {self.parent_directory}, {self.root_directory}, {self.basic_files_directory}")
-        # Remove underscores, capitalize each word segment, and concatenate
+         # Remove underscores, capitalize each word segment, and concatenate
         if "_" in simulation_type:
             formatted_simulation_type = simulation_type.replace('_', ' ').title().replace(' ', '')
         else:
@@ -36,17 +36,15 @@ class SimulationManager:
         if "Simulation" not in simulation_type:
             formatted_simulation_type += "Simulation"
         # Set up the simulation directory path
-        print(f'the fucking root directory is {self.root_directory}')
         self.simulation_dir = os.path.join(self.root_directory, formatted_simulation_type)
-        print(f"simulation directory: {self.simulation_dir}")
 
         # Create the simulation directory if it doesn't exist
         if not os.path.exists(self.simulation_dir):
             os.makedirs(self.simulation_dir)
         # Copy basic files into the simulation directory
         self.copy_basic_files(self.simulation_dir)
-        print("basic files copied")
         # Create the specific simulation setup
+    
     def copy_basic_files(self, simulation_dir):
         """
         Copy basic files needed for the simulation into the simulation directory.
@@ -57,29 +55,36 @@ class SimulationManager:
         """
         if self.basic_files_directory is None:
             self.find_basic_files_directory()
-        print("basic files directory: ", self.basic_files_directory)
         # Check for subdirectories in the simulation directory
         subdirs = [os.path.join(simulation_dir, d) for d in os.listdir(simulation_dir) if os.path.isdir(os.path.join(simulation_dir, d)) and not d.startswith('.')]
-
+        def copy_with_retries(src, dst, retries=5, delay=0.5):
+            """Retry file copy if file is busy"""
+            for _ in range(retries):
+                try:
+                    shutil.copy2(src, dst)
+                    return  # Successful copy
+                except (OSError, IOError) as e:
+                    if "text file busy" in str(e).lower():
+                        time.sleep(delay)
+                    else:
+                        raise
         if subdirs:
-            # Copy files into each subdirectory
             for subdir in subdirs:
                 for item in os.listdir(self.basic_files_directory):
-                    s = os.path.join(self.basic_files_directory, item)
-                    d = os.path.join(subdir, item)
-                    if os.path.isdir(s):
-                        shutil.copytree(s, d, dirs_exist_ok=True)
+                    src = os.path.join(self.basic_files_directory, item)
+                    dst = os.path.join(subdir, item)
+                    if os.path.isdir(src):
+                        shutil.copytree(src, dst, dirs_exist_ok=True)
                     else:
-                        shutil.copy2(s, d)
+                        copy_with_retries(src, dst)
         else:
-            # If no subdirectories, copy files directly to simulation_dir
             for item in os.listdir(self.basic_files_directory):
-                s = os.path.join(self.basic_files_directory, item)
-                d = os.path.join(simulation_dir, item)
-                if os.path.isdir(s):
-                    shutil.copytree(s, d, dirs_exist_ok=True)
+                src = os.path.join(self.basic_files_directory, item)
+                dst = os.path.join(simulation_dir, item)
+                if os.path.isdir(src):
+                    shutil.copytree(src, dst, dirs_exist_ok=True)
                 else:
-                    shutil.copy2(s, d)
+                    copy_with_retries(src, dst)
 
     def find_basic_files_directory(self):
         basic_files_dir = "basic_files"

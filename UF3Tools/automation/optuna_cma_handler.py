@@ -286,9 +286,7 @@ def train_with_preloaded_data(params, settings, trial_id=0):
     print("export model to lammps")
 
     try:
-        print("lick my balls")
         validation_data = analyzer.validate_potential(potential_label, model_filename, settings['element_list'], settings['validations_to_run'])
-        print("potential validated")
     except Exception as e:
         return {"status": "failed", "error": f"Validation error: {str(e)}"}
 

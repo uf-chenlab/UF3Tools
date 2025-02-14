@@ -304,7 +304,6 @@ def train_with_preloaded_data(params, settings, trial_id=0):
     print("export model to lammps")
 
     try:
-        print("lick my balls")
         validation_data = validate_potential_with_timeout(
             analyzer, potential_label, model_filename, 
             settings['element_list'], settings['validations_to_run'], timeout=600
@@ -312,7 +311,6 @@ def train_with_preloaded_data(params, settings, trial_id=0):
         if(validation_data is None):
             print("validation data is none! timed out")
             return None, 999  # Assigning high loss
-        print("potential validated")
     except Exception as e:
         return {"status": "failed", "error": f"Validation error: {str(e)}"}
 

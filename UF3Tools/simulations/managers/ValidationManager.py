@@ -6,7 +6,7 @@ from ..validations.LatticeConstantValidation import LatticeConstantValidation
 from ..validations.SurfaceEnergyValidation import SurfaceEnergyValidation
 from ..validations.PotentialValidation import ValidationData
 from .LammpsSimulationFileManager import LammpsSimulationFileManager
-
+from ...common.LAMMPSModifier import LAMMPSModifier
 class ValidationManager:
     validation_lut = {
             "cohesive_energy": CohesiveEnergyValidation,
@@ -21,7 +21,7 @@ class ValidationManager:
         'elastic_tensor': "dft/simulations/ElasticTensor/results.txt",
         'surface_energy': "dft/simulations/SurfaceEnergySimulation/"
     }
-    def __init__(self, potential_file, lammps_model_file, dft_model_file, element_list, validation_folder_path, validations_to_run, **kwargs):
+    def __init__(self, potential_version, structure_id, potential_file, lammps_model_file, dft_model_file, element_list, validation_folder_path, validations_to_run, **kwargs):
         self.potential_file = potential_file
         self.lammps_model_file = lammps_model_file
         self.dft_model_file = dft_model_file
@@ -32,19 +32,17 @@ class ValidationManager:
         self.base_simulations_required = []
         self.base_results = {}
         self.base_simulation_objects = {}
-        self.validation_data = ValidationData()
+        self.validation_data = ValidationData(potential_version, potential_file, structure_id)
         self.current_directory = os.getcwd()
-    def get_validation_data():
+    def get_validation_data(self):
         return self.validation_data
     def run_validation(self, overwrite=True, local=False):
         """
         Run the validation process.
         """
         os.chdir(self.validation_folder_path)
-        print("validation folder path is: ", self.validation_folder_path)
         # determine the base simulations needed
         for validation in self.validations_to_run:
-            print(f"validation to run: {validation}")
             req_list = self.validation_lut[validation].get_required_base_simulations()
             if(req_list != [] and req_list != None):
                 self.base_simulations_required.append(req_list)
@@ -53,21 +51,16 @@ class ValidationManager:
         #combine the base simulations into a single list
         base_simulations = []
         for sublist in self.base_simulations_required:
-            print(f"sublist: {sublist}")
             base_simulations.extend(sublist)
         #remove duplicates
         base_simulations = list(set(base_simulations))
         #create the base simulations
         for base_simulation in base_simulations:      
-            print(f"workign dir: {os.getcwd()}")
             manager = LammpsSimulationFileManager()
-            print(f"workign dir: {os.getcwd()}")
             manager.setup_simulation(base_simulation.get_id())
-            print(f"workign dir: {os.getcwd()}")
             base_simulation = base_simulation(manager.get_simulation_directory(), manager.get_template_directory(), **self.kwargs)
             os.chdir(self.current_directory)
             manager.set_potential_file(self.potential_file, base_simulation)
-            print(f"workign dir: {os.getcwd()}")
             manager.set_model_file(self.lammps_model_file)
             os.chdir(self.validation_folder_path)
             result = base_simulation.run(overwrite=overwrite, local=local)
@@ -80,14 +73,17 @@ class ValidationManager:
         
         #sort the validations to run by computational weight
         self.validations_to_run.sort(key=lambda x: self.validation_lut[x].get_computational_weight())
-        print(f"validations to run: {self.validations_to_run}")
         for validation in self.validations_to_run:
             print(f'running validation: {validation}')
             os.chdir(self.current_directory)
-            
+            if self.validation_lut[validation].requires_supercell == True:
+                modifier = LAMMPSModifier(self.lammps_model_file)
+                lammps_file = modifier.generate_supercell((8,8,8))
+            else:
+                lammps_file = self.lammps_model_file
             validation_class = self.validation_lut[validation](
                 self.potential_file,
-                self.lammps_model_file,
+                lammps_file,
                 self.dft_model_file,
                 self.element_list,
                 self.validation_folder_path,

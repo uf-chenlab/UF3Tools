@@ -6,6 +6,7 @@ class SurfaceEnergyValidation(PotentialValidation):
     def get_required_base_simulations(cls):
         return None
     computational_weight=1
+    requires_supercell = True
     def __init__(self, potential_file, lammps_model_file, dft_model_file, element_list, validation_folder_path,**kwargs):
         self.simulation_type = "SurfaceEnergySimulation"
         super().__init__(self.simulation_type, potential_file, lammps_model_file, dft_model_file, element_list,  validation_folder_path,use_dft=False)

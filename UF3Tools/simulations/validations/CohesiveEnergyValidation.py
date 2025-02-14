@@ -7,6 +7,7 @@ class CohesiveEnergyValidation(PotentialValidation):
     def get_required_base_simulations(cls):
         return CohesiveEnergySimulation.get_required_sub_simulations()
     computational_weight=1
+    requires_supercell = False
     def __init__(self, potential_file, lammps_model_file, dft_model_file, element_list, validation_folder_path,**kwargs):
         self.simulation_type = "CohesiveEnergySimulation"
         super().__init__(self.simulation_type, potential_file, lammps_model_file, dft_model_file, element_list,  validation_folder_path,use_dft=False)

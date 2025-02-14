@@ -6,6 +6,7 @@ class ElasticTensorValidation(PotentialValidation):
     def get_required_base_simulations(cls):
         return None
     computational_weight=2
+    requires_supercell = False
     def __init__(self, potential_file, lammps_model_file, dft_model_file, element_list, validation_folder_path,**kwargs):
         self.simulation_type = "ElasticTensorSimulation"
         super().__init__(self.simulation_type, potential_file, lammps_model_file, dft_model_file, element_list,  validation_folder_path,use_dft=False)
