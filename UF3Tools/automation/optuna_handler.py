@@ -111,10 +111,10 @@ def worker_init_once(
     os.chdir(trial_folder)
     return f"Data loaded on {worker_hostname}"
 
-def validate_potential_with_timeout(analyzer, potential_label, model_filename, element_list, validations_to_run, timeout=600):
+def validate_potential_with_timeout(analyzer, potential_label, model_filename, element_list, rmse,validations_to_run, relative_order, timeout=600):
     # assumes 999 loss if the simulation takes too long (it blew up)
     def run_validation():
-        return analyzer.validate_potential(potential_label, model_filename, element_list, validations_to_run)
+        return analyzer.validate_potential(potential_label, model_filename, element_list, rmse, validations_to_run, relative_order)
     with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
         future = executor.submit(run_validation)
         try:
@@ -136,6 +136,7 @@ def loss_function(avg_result, normalized_error, acceptable_errors, weights):
         avg_result.get('C44all', 0), avg_result.get('C55all', 0), avg_result.get('C66all', 0)
     ]
     avg_elastic_constant = sum(elastic_constants) / len(elastic_constants)
+    surface_energy = avg_result.get('surface_energy', 0)
     
     
     # Normalize errors by acceptable thresholds
@@ -145,6 +146,7 @@ def loss_function(avg_result, normalized_error, acceptable_errors, weights):
     norm_shear = abs(shear_modulus) / acceptable_errors['shear_modulus']
     norm_lattice = abs(lattice_constants) / acceptable_errors['lattice_constants']
     norm_error = abs(normalized_error) / acceptable_errors['normalized_error']
+    norm_surface_energy = abs(surface_energy) / acceptable_errors['surface_energy']
     
     # Weights (adjustable for importance)
     weight_cohesive = weights['cohesive']
@@ -153,6 +155,7 @@ def loss_function(avg_result, normalized_error, acceptable_errors, weights):
     weight_shear = weights['shear']
     weight_lattice = weights['lattice']
     weight_error = weights['error']
+    weight_surface_energy = weights['surface_energy']
     
     # Calculate loss with normalized errors
     loss = (
@@ -161,7 +164,8 @@ def loss_function(avg_result, normalized_error, acceptable_errors, weights):
         weight_bulk * norm_bulk +
         weight_shear * norm_shear +
         weight_lattice * norm_lattice +
-        weight_error * norm_error
+        weight_error * norm_error +
+        weight_surface_energy * norm_surface_energy
     )
     return loss
 def parse_validation_data(validation_data, normalized_error, acceptable_errors, weights):
@@ -302,11 +306,14 @@ def train_with_preloaded_data(params, settings, trial_id=0):
         "nk"
     )
     print("export model to lammps")
-
+    if settings['loss_weights']['error'] == 0:
+        rmse = False
+    else:
+        rmse = True
     try:
         validation_data = validate_potential_with_timeout(
             analyzer, potential_label, model_filename, 
-            settings['element_list'], settings['validations_to_run'], timeout=600
+            settings['element_list'], rmse, settings['validations_to_run'], settings['relative_orders'], timeout=1200
         )
         if(validation_data is None):
             print("validation data is none! timed out")
@@ -357,7 +364,9 @@ def objective(trial, client, settings):
     if isinstance(result, tuple) and len(result) == 2:
         validation_data, normalized_error = result
     else:
-        error, validation_data = None, result  # Assume result is the validation_data
+        print("weird else case: ", result)
+        return None
+        error, validation_data, normalized_error = None, result  # Assume result is the validation_data
         print("the weirde else case")
 
 

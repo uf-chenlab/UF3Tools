@@ -8,79 +8,84 @@ class SurfaceEnergySimulation(LammpsSimulation):
     simulation_type = "SurfaceEnergy"
     result_type = "surface_energy"
     def __init__(self, simulation_directory, template_directory, **kwargs):
-        self.template_file_name = 'in.surface'
-        self.original_directory = os.getcwd()
-        self.simulation_directory = os.path.join(simulation_directory, (self.simulation_type+'Simulation'))
-        self.output_file = os.path.join(simulation_directory, "lammps.in")
+        abs_sim_dir = os.path.abspath(simulation_directory)
+        abs_template_dir = os.path.abspath(template_directory)
+        final_sim_path = os.path.join(abs_sim_dir, self.simulation_type + "Simulation")
+
+        self.template_file_name = "in.surface"
+        self.simulation_directory = final_sim_path
+        self.output_file = os.path.join(final_sim_path, "lammps.in")
+
         self.parameters = {
-            'atom_style': 'atomic',
-            'change_box': '',
-            'box_relax_settings': '',
-            'uf3_degree': '3',
-            'uf3_file': 'AlN.uf3',
-            'uf3_elements': 'Al N',
-            'min_style': 'cg',
-            'etol': '1e-25',
-            'ftol': '1e-25',
-            'maxiter': '10000',
-            'maxeval': '50000'
+            "atom_style": "atomic",
+            "change_box": "",
+            "box_relax_settings": "",
+            "uf3_degree": "3",
+            "uf3_file": "AlN.uf3",
+            "uf3_elements": "Al N",
+            "min_style": "cg",
+            "etol": "1e-25",
+            "ftol": "1e-25",
+            "maxiter": "10000",
+            "maxeval": "50000",
         }
         self.parameters.update(kwargs)
-        super().__init__(self.simulation_directory, os.path.join(template_directory, (self.simulation_type + 'Simulation')), self.template_file_name, "lammps.in", self.parameters, **kwargs)
+
+        super().__init__(
+            self.simulation_directory,
+            os.path.join(abs_template_dir, self.simulation_type + "Simulation"),
+            self.template_file_name,
+            "lammps.in",
+            self.parameters,
+            **kwargs
+        )
+
     def process_simulation_results(self):
-        self.result['bulk_energy'] = self._read_bulk_energy()
-        self.result['slab_energy'] = self._read_slab_energy()
-        self.result['unrelaxed_slab_energy'] = self._read_unrelaxed_slab_energy()
+        self.result["bulk_energy"] = self._read_bulk_energy()
+        self.result["slab_energy"] = self._read_slab_energy()
+        self.result["unrelaxed_slab_energy"] = self._read_unrelaxed_slab_energy()
         self.result.update(self._read_area())
         return self.result
-        
+
     def _read_bulk_energy(self):
         bulk_file_path = os.path.join(self.simulation_directory, "bulk.txt")
-        area_path = "bulk_area.txt"
-        try:
-            pattern = r'pe\s*=\s*([-.\d]+)'
-            match = self.read_result_file(bulk_file_path, pattern)
-            if match:
-                return float(match.group(1))
-        except FileNotFoundError:
-            print(f"File {bulk_file_path} not found.")
+        pattern = r"pe\s*=\s*([-.\d]+)"
+        match = self.read_result_file(bulk_file_path, pattern)
+        if match:
+            return float(match.group(1))
         return None
+
     def _read_slab_energy(self):
         slab_file_path = os.path.join(self.simulation_directory, "relaxed_slab.txt")
-        try:
-            pattern = r'pe\s*=\s*([-.\d]+)'
-            match = self.read_result_file(slab_file_path, pattern)
-            if match:
-                return float(match.group(1))
-        except FileNotFoundError:
-            print(f"File {slab_file_path} not found.")
+        pattern = r"pe\s*=\s*([-.\d]+)"
+        match = self.read_result_file(slab_file_path, pattern)
+        if match:
+            return float(match.group(1))
         return None
+
     def _read_unrelaxed_slab_energy(self):
         slab_file_path = os.path.join(self.simulation_directory, "unrelaxed_slab.txt")
-        try:
-            pattern = r'pe\s*=\s*([-.\d]+)'
-            match = self.read_result_file(slab_file_path, pattern)
-            if match:
-                return float(match.group(1))
-        except FileNotFoundError:
-            print(f"File {slab_file_path} not found.")
+        pattern = r"pe\s*=\s*([-.\d]+)"
+        match = self.read_result_file(slab_file_path, pattern)
+        if match:
+            return float(match.group(1))
         return None
+
     def _read_area(self):
-        area_path = "bulk_area.txt"
-        bulk_area = self._read_area_file(area_path)
-        area_path = "relaxed_slab_area.txt"
-        slab_area = self._read_area_file(area_path)
-        unrelaxed_area = self._read_area_file("unrelaxed_slab_area.txt")
-        return {'bulk_area': bulk_area, 'relaxed_slab_area': slab_area, 'unrelaxed_slab_area': unrelaxed_area}
-            
+        bulk_area = self._read_area_file(os.path.join(self.simulation_directory, "bulk_area.txt"))
+        slab_area = self._read_area_file(os.path.join(self.simulation_directory, "relaxed_slab_area.txt"))
+        unrelaxed_area = self._read_area_file(os.path.join(self.simulation_directory, "unrelaxed_slab_area.txt"))
+        return {
+            "bulk_area": bulk_area,
+            "relaxed_slab_area": slab_area,
+            "unrelaxed_slab_area": unrelaxed_area
+        }
+
     def _read_area_file(self, path):
-        try:
-            pattern = r'lx\s*=\s*([-.\d]+)\s*ly\s*=\s*([-.\d]+)'
-            match = self.read_result_file(path, pattern)
-            if match:
-                return float(match.group(1)) * float(match.group(2))
-        except FileNotFoundError:
-            print(f"File {path} not found.")
+        pattern = r"lx\s*=\s*([-.\d]+)\s*ly\s*=\s*([-.\d]+)"
+        match = self.read_result_file(path, pattern)
+        if match:
+            return float(match.group(1)) * float(match.group(2))
         return None
         
     

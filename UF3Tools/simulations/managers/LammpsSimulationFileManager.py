@@ -5,11 +5,12 @@ import numpy as np
 from ..simulations.Simulation import LammpsSimulation
 
 class LammpsSimulationFileManager(SimulationManager):
-    def __init__(self):
+    def __init__(self, parent_directory):
         # Automatically set the parent directory to "/lammps"
         self.original_directory = os.getcwd()
-        self.base_directory = os.path.join(os.getcwd(), "lammps")
-        super().__init__("lammps")
+        self.base_directory = os.path.join(parent_directory, "lammps")
+        print(f"base directory: {self.base_directory}")
+        super().__init__(self.base_directory)
     def setup_simulation_directory(self, simulation_type):
         sim_dir = os.path.join(self.base_directory, simulation_type)
         if not os.path.exists(sim_dir):
@@ -24,7 +25,7 @@ class LammpsSimulationFileManager(SimulationManager):
         :param model_file: The path to the model file.
         """
         # Define the target file name in the simulation directory
-        target_file = "data.lammps"
+        target_file = os.path.join(self.base_directory, "data.lammps")
 
         # Check if the source model file exists
         if not os.path.exists(model_file):

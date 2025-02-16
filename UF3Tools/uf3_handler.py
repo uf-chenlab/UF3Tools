@@ -22,7 +22,7 @@ from pymatgen.io.ase import AseAtomsAdaptor
 import ase
 from pymatgen.analysis.phase_diagram import PhaseDiagram, PDPlotter, PDEntry
 from pymatgen.io.ase import AseAtomsAdaptor
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 from uf3.data import analyze
 import re
 from UF3Tools.simulations import *
@@ -1723,8 +1723,8 @@ class ModelAnalyzer:
         # Calculate normalized RMSE
         normalized_rmse = (rmse_e / std_e + rmse_f / std_f) / 2
         return normalized_rmse
-        
-    def validate_potential(self, potential_version, potential_file, element_list, validations_to_run=None):
+    
+    def validate_potential(self, potential_version, potential_file, element_list, rmse=False, validations_to_run=None, relative_orders=None):
         """
         Validate the potential dynamically using LAMMPS and DFT files 
         identified from the validation folder structure and file names.
@@ -1746,45 +1746,84 @@ class ModelAnalyzer:
                 "elastic_tensor": True,
                 "surface_energy": True
             }
-
-        for structure in self.dft_validation_structures:
+        def process_structure(structure):
             if "POSCAR" in structure or "LAMMPS" in structure:
                 print(f"Skipping structure containing POSCAR or LAMMPS: {structure}")
-                continue
-            # Extract the Materials Project ID from the structure name
+                return None
+
             structure_id = structure.replace("mp-", "")
             validation_folder_path = os.path.join(current_directory, "validation/structures", structure)
             lammps_file = os.path.join(validation_folder_path, f"LAMMPS_{structure_id}.data")
             dft_file = os.path.join(validation_folder_path, f"POSCAR_{structure_id}")
 
-            # Validate that the files exist
             if not os.path.isfile(lammps_file) or not os.path.isfile(dft_file):
                 print(f"Files missing for structure {structure_id}: {lammps_file}, {dft_file}")
-                continue
+                return None
 
-            # Ensure files are added to the validation lists
-            if dft_file not in self.dft_validation_structures:
-                self.dft_validation_structures.append(dft_file)
-            if lammps_file not in self.lammps_validation_structures:
-                self.lammps_validation_structures.append(lammps_file)
-
-            # Create the element list as a space-separated string
             element_list_str = " ".join(element_list)
 
-            # Initialize ValidationData
-            lammps_file_ori = lammps_file
+            # Generate a supercell without touching global directories
             modifier = LAMMPSModifier(lammps_file)
-            lammps_file_big = modifier.generate_supercell((4,4,4))
-            manager = ValidationManager(potential_version, structure_id, potential_file, lammps_file, dft_file, element_list_str, validation_folder_path, validations_to_run)
+            lammps_file_big = modifier.generate_supercell((4, 4, 4))
+
+            # Construct the ValidationManager without chdirs
+            manager = ValidationManager(
+                potential_version,
+                structure_id,
+                potential_file,
+                lammps_file,
+                dft_file,
+                element_list_str,
+                validation_folder_path,
+                validations_to_run
+            )
+
             data = manager.run_validation()
-            os.chdir(current_directory)
-            normalized_error = self.calculate_normalized_error(self.test_model_prediction())
+            if rmse == True:
+                normalized_error = self.calculate_normalized_error(self.test_model_prediction())
+            else:
+                normalized_error = None
             data.set_normalized_error(normalized_error)
-            # Append the validation data
-            datas.append(data)
-            
-            # Return to the initial directory after processing each structure
-            os.chdir(current_directory)
+
+            return data
+
+        with ThreadPoolExecutor(max_workers=4) as executor:
+            future_to_structure = {
+                executor.submit(process_structure, s): s for s in self.dft_validation_structures
+            }
+            for future in as_completed(future_to_structure):
+                result = future.result()
+                if result:
+                    datas.append(result)
+
+        relative_order_result = {}
+
+        if relative_orders is not None and len(datas) > 1:
+            for validation, expected_order in relative_orders.items():
+                print("Testing validation:", validation)
+                lammps_results = {}
+
+                for data in datas:
+                    validation_results = data.get_lammps_validation_results()
+                    if validation in validation_results:
+                        lammps_results[data.get_structure_id()] = validation_results[validation][validation]
+                        print("Validation data:", validation_results[validation][validation])
+
+                # Sort structure IDs based on LAMMPS energy values (ascending order)
+                sorted_lammps = sorted(lammps_results, key=lammps_results.get)
+                print("Sorted LAMMPS:", sorted_lammps)
+
+                # Compare sorted order with expected relative order
+                if expected_order != sorted_lammps:
+                    print(f"Relative order does not match for {validation}")
+                    relative_order_result[validation] = False
+                else:
+                    print(f"Relative order matches for {validation}")
+                    relative_order_result[validation] = True
+
+            # Store the relative order results back into each data object
+            for data in datas:
+                data.set_relative_order_results(relative_order_result)
 
         return datas
 

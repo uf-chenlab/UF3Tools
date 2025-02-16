@@ -38,7 +38,7 @@ class ElasticTensorSimulation(LammpsSimulation):
             "shear_modulus_reuss": None,
             "shear_modulus_hill": None,
             }
-        file_path = "results.txt"
+        file_path = os.path.join(self.simulation_directory, "results.txt")
         # Initialize an empty elastic tensor
         elastic_tensor = {}
 
@@ -53,7 +53,7 @@ class ElasticTensorSimulation(LammpsSimulation):
         try:
             with open(file_path, "r") as file:
                 lines = file.readlines()
-
+            print(f"read file: {file_path}: {lines}")
             for line in lines:
                 # Match elastic tensor components
                 elastic_match = elastic_pattern.search(line)

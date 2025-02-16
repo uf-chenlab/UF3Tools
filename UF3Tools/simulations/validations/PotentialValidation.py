@@ -11,116 +11,112 @@ class PotentialValidation:
     computational_weight = 0
     required_base_simulations = []
     simulation = None
-    requires_supercell = False
-    
+    required_supercell = (1, 1, 1)
+
     @classmethod
     def get_computational_weight(cls):
         return cls.computational_weight
-    
+
     @classmethod
     def get_required_base_simulations(cls):
         return cls.required_base_simulations
-    
+
     @classmethod
-    def requires_supercell(cls):
-        return cls.requires_supercell
-    
+    def get_required_supercell(cls):
+        return cls.required_supercell
+
     def __init__(self, simulation_type, potential_file, lammps_model_file, dft_model_file, element_list, root_directory, use_dft=False):
-        #initialize variables
-        print("potentialvalidation init")
-        self.potential_file = potential_file
-        print("potential file: ", self.potential_file)
-        self.lammps_model_file = lammps_model_file
-        print("lammps model file: ", self.lammps_model_file)
-        self.dft_model_file = dft_model_file
-        print("dft model file: ", self.dft_model_file)
+        # Ensure all file paths are absolute
+        self.potential_file = os.path.abspath(potential_file)
+        self.lammps_model_file = os.path.abspath(lammps_model_file)
+        self.dft_model_file = os.path.abspath(dft_model_file)
+        self.root_directory = os.path.abspath(root_directory)
+
+        print(f"Potential file: {self.potential_file}")
+        print(f"LAMMPS model file: {self.lammps_model_file}")
+        print(f"DFT model file: {self.dft_model_file}")
+        print(f"Root directory: {self.root_directory}")
+
         self.element_list = element_list
-        print("element list: ", self.element_list)
+        print(f"Element list: {self.element_list}")
+
         self.use_dft = use_dft
-        print("use dft: ", self.use_dft)
+        print(f"Use DFT: {self.use_dft}")
+
         self.has_dft_data = False
-        
         self.simulation_type = simulation_type
         self.simulation = None
-        print("variables set up")
-        
-        #initialize folder structures
-        self.original_directory = os.getcwd()
-        print("printing original directory")
-        print(self.original_directory)
-        self.root_directory = root_directory
+
+        # Ensure root directory exists
         os.makedirs(self.root_directory, exist_ok=True)
-        os.chdir(self.root_directory)
-        print("printing root directory")
-        print(self.root_directory)
-        #initialize simulation managers
-        self.lammps_manager = LammpsSimulationFileManager()
-        self.dft_manager = DFTSimulationManager()
+
+        # Initialize simulation managers with absolute paths
+        self.lammps_manager = LammpsSimulationFileManager(self.root_directory)
+        self.dft_manager = DFTSimulationManager(self.root_directory)
         self.dft_result = {}
         self.lammps_results = []
+
     def initialize_simulation_files(self):
-        os.chdir(self.original_directory)
-        print("POTENTIAL VALIDATION IS IN :", os.getcwd())
+        print(f"Initializing simulation files in: {self.root_directory}")
         self.lammps_manager.set_potential_file(self.potential_file, self.simulation)
         self.lammps_manager.set_model_file(self.lammps_model_file)
-        os.chdir(self.simulation.get_directory())
+
     def get_simulation(self):
         return self.simulation
+
     def start_validation(self, overwrite=True, local=False):
-        """
-        Start the validation process by running the LAMMPS and DFT simulations and comparing results.
-        """
-        if self.lammps_results == []:
-            #self.initialize_simulation_files()
+        if not self.lammps_results:
+            print(f"Running LAMMPS simulation in: {self.simulation.get_directory()}")
             self.lammps_results = self.simulation.run(overwrite=overwrite, local=local)
-        print(f"lammps results: {self.lammps_results}")
-        # Proceed if both LAMMPS and DFT data are available (either newly run or from stored data)
-        if self.lammps_results and ((self.use_dft and self.dft_data) or self.has_dft_data == True):
-            print("entered if")
+
+        print(f"LAMMPS results: {self.lammps_results}")
+
+        if self.lammps_results and ((self.use_dft and self.dft_data) or self.has_dft_data):
             if self.has_dft_data:
                 if isinstance(self.lammps_results, list):
                     self.lammps_results = self.lammps_results[0]
-                print("enetered dft data int ")
-                print(f"lammps result: {self.lammps_results[self.simulation.get_result_type()]}")
-                print(f'dft result: {self.dft_data}')
-                
-                # Initialize the dictionary for percent errors
-                percent_error = {}
-                if(self.simulation.get_result_type() in self.lammps_results.keys()):
-                    self.lammps_results = self.lammps_results[self.simulation.get_result_type()]
-                for key in self.lammps_results:
-                    if key in self.dft_data:
-                        dft_value = self.dft_data[key]
-                        lammps_value = self.lammps_results[key]
 
-                        if dft_value != 0:  # Prevent division by zero
-                            percent_error[key] = self.calculate_percent_error(dft_value, lammps_value)
-                        else:
-                            percent_error[key] = None  # Handle zero-division case
-                        
+                print(f"LAMMPS result: {self.lammps_results.get(self.simulation.get_result_type(), 'N/A')}")
+                print(f"DFT result: {self.dft_data}")
+
+                percent_error = {}
+                result_type = self.simulation.get_result_type()
+
+                if result_type in self.lammps_results:
+                    self.lammps_results = self.lammps_results[result_type]
+
+                for key in self.lammps_results:
+                    dft_value = self.dft_data.get(key)
+                    lammps_value = self.lammps_results[key]
+
+                    if dft_value is not None and dft_value != 0:
+                        percent_error[key] = self.calculate_percent_error(dft_value, lammps_value)
                     else:
-                        print(f"Warning: Key '{key}' not found in DFT results.")
+                        percent_error[key] = None
 
                 return percent_error
 
-        # If results are missing, throw an error
-        print("NO DFT DATA FOUND IDIOT")
-        return {
-           self.simulation.get_result_type(): None
-        }
+        print("No DFT data found")
+        return {self.simulation.get_result_type(): None}
+
     def retrieve_dft_result(self, path):
-        # subclass should implement this
         raise NotImplementedError("Subclasses should implement this method")
+
     def retrieve_lammps_result(self):
         return self.simulation.get_result()
+
     def import_base_simulations(self, simulations):
-        self.base_results = simulations      
+        self.base_results = simulations
+
+    def get_lammps_validation_results(self):
+        return self.lammps_results
+
     def calculate_percent_error(self, dft_data, lammps_data):
-        if dft_data == 0 or dft_data == None:
+        if dft_data is None or dft_data == 0:
             return None
-        if lammps_data == None:
+        if lammps_data is None:
             return None
-        return abs(abs(lammps_data - dft_data) / dft_data) * 100
+        return abs(lammps_data - dft_data) / dft_data * 100
 
 class ValidationData:
     def __init__(self, potential_version, potential_file, structure):
@@ -128,9 +124,13 @@ class ValidationData:
         self.potential_file = potential_file
         self.structure = structure
         self.validation_data = {}
+        self.lammps_data={}
+        self.relative_order_results = {}
         self.normalized_error = None
     def add_validation(self, validation_type, validation_results):
         self.validation_data[validation_type] = validation_results
+    def get_structure_id(self):
+        return self.structure
     def get_potential_version(self):
         return self.potential_version
     def get_validation_data(self):
@@ -143,10 +143,21 @@ class ValidationData:
         self.normalized_error = error
     def get_normalized_error(self):
         return self.normalized_error
+    def set_lammps_validation_results(self, lammps_data):
+        self.lammps_data = lammps_data
+    def add_lammps_validation_result(self, validation_type, lammps_data):
+        self.lammps_data[validation_type] = lammps_data
+    def get_lammps_validation_results(self):
+        return self.lammps_data
+    def get_relative_order_results(self):
+        return self.relative_order_results
+    def set_relative_order_results(self, relative_order_results):
+        self.relative_order_results = relative_order_results
     def __str__(self):
         output = f"Potential version: {self.potential_version}\n"
         output += f"Structure: {self.structure}\n"
         output += f'Normalized error: {self.normalized_error}\n'
+        output += f'Relative Order: {self.relative_order_results}\n'
         for validation_type, validation_results in self.validation_data.items():
             output += f"{validation_type} validation results:\n"
             # Check if validation_results is a list of dictionaries

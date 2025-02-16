@@ -12,9 +12,12 @@ from ..common.DFTDataParser import DFTDataParser
 
         
 class DFTSimulationManager(SimulationManager):
-    def __init__(self):
-        # Automatically set the parent directory to "/dft"
-        super().__init__("dft")
+    def __init__(self, parent_directory):
+       # Automatically set the parent directory to "/lammps"
+        self.original_directory = os.getcwd()
+        self.base_directory = os.path.join(parent_directory, "dft")
+        print(f"base directory: {self.base_directory}")
+        super().__init__(self.base_directory)
     def create_simulation(self, simulation_type, **kwargs):
         """
         Create a DFT simulation based on the simulation type.

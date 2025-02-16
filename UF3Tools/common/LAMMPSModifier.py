@@ -2,10 +2,11 @@ from pymatgen.io.lammps.data import LammpsData
 from pymatgen.transformations.standard_transformations import SupercellTransformation
 import numpy as np
 from pymatgen.core.lattice import Lattice
+import os
 
 class LAMMPSModifier:
     def __init__(self, lammps_file, atom_style='atomic'):
-        self.lammps_file = lammps_file
+        self.lammps_file = os.path.abspath(lammps_file)
         self.atom_style = atom_style
         self.structure = self.load_structure_from_file()
     

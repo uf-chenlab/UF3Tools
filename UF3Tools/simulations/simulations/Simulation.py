@@ -18,39 +18,31 @@ class LammpsSimulation:
                  output_file,
                  parameters=None,
                  **kwargs):
+        self.simulation_directory = os.path.abspath(simulation_directory)
         self.template_file = os.path.join(template_directory, template_file)
-        self.original_directory = os.getcwd()
-        self.simulation_directory = simulation_directory
-        print(f"LAMMPSSimulation directory: {self.simulation_directory}")
-        self.output_file = os.path.join(simulation_directory, output_file)
+        self.output_file = os.path.join(self.simulation_directory, output_file)
         self.parameters = parameters or {}
         self.parameters.update(kwargs)
         self.result = {}
         self.setup_input_file()
     def run(self, local=False, overwrite=False):
-        print(f"running simulation: {self.simulation_directory}")
-        os.chdir(self.simulation_directory)
-        if(local == True):
+        # Parallel safe because it's only changing the cwd of the subprocess, not the process globally
+        if local:
             command = "chmod 777 startSimulation.sh && ./startSimulation.sh"
         else:
-            #command = "chmod 777 start_simulation_hpg.sh && ./start_simulation_hpg.sh"
-            command = "export OMP_NUM_THREADS=8 && mpirun -np 1 ./lmp_mpi_hpg < lammps.in"
-        #subprocess.run(command, shell=True,stdout=subprocess.DEVNULL)
-        subprocess.run(command, shell=True)
-        result = self.process_simulation_results()
-        os.chdir(self.original_directory)
-        return result  
+            command = "chmod 777 start_simulation_hpg.sh && ./start_simulation_hpg.sh"
+
+        subprocess.run(command, shell=True, cwd=self.simulation_directory)
+        return self.process_simulation_results()
     def set_potential_file(self, potential_file):
         print(f"setting potential file: {potential_file}, {os.getcwd()}")
         self.parameters['uf3_file'] = potential_file
         self.setup_input_file()
     
     def setup_input_file(self):
-        os.chdir(self.simulation_directory)
         handler = LammpsInputFileHandler(self.template_file, self.output_file)
         handler.update_simulation_parameters(**self.parameters)
         handler.generate_input_file()
-        os.chdir(self.original_directory)
     def get_directory(self):
         return self.simulation_directory
     def check_existing_results(self):
