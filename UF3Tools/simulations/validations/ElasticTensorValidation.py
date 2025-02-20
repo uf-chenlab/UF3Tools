@@ -53,6 +53,88 @@ class ElasticTensorValidation(PotentialValidation):
         self.dft_data = dft_parser.get_elastic_tensor(abs_path)
         print(f'dft data: {self.dft_data}')
         self.has_dft_data = True
+        
+    def extract_independent_elastic_constants(self, elastic_tensor):
+        """
+        Determines the crystal structure type based on the symmetry of the elastic tensor 
+        and extracts the independent elastic constants accordingly.
+
+        Parameters:
+            elastic_tensor (dict): Dictionary containing elastic tensor components.
+
+        Returns:
+            tuple: (structure_type, dict of independent elastic constants)
+        """
+        C11 = elastic_tensor.get("C11", None)
+        C12 = elastic_tensor.get("C12", None)
+        C13 = elastic_tensor.get("C13", None)
+        C22 = elastic_tensor.get("C22", None)
+        C23 = elastic_tensor.get("C23", None)
+        C33 = elastic_tensor.get("C33", None)
+        C44 = elastic_tensor.get("C44", None)
+        C55 = elastic_tensor.get("C55", None)
+        C66 = elastic_tensor.get("C66", None)
+
+        # **Cubic**: 3 independent constants
+        # Conditions: C11 = C22 = C33, C12 = C13 = C23, C44 = C55 = C66
+        if (C11 == C22 == C33) and (C12 == C13 == C23) and (C44 == C55 == C66):
+            return "cubic", {
+                "C11": C11,
+                "C12": C12,
+                "C44": C44,
+            }
+
+        # **Hexagonal/Wurtzite**: 5 independent constants
+        # Conditions: C11 = C22, C13 = C23, C44 = C55, and C66 = (C11 - C12) / 2
+        elif (C11 == C22) and (C13 == C23) and (C44 == C55) and (C66 == (C11 - C12) / 2):
+            return "hexagonal/wurtzite", {
+                "C11": C11,
+                "C12": C12,
+                "C13": C13,
+                "C33": C33,
+                "C44": C44,
+            }
+
+        # **Tetragonal**: 6 independent constants
+        # Conditions: C11 = C22, C13 = C23, C44 = C55 (but C66 is independent)
+        elif (C11 == C22) and (C13 == C23) and (C44 == C55):
+            return "tetragonal", {
+                "C11": C11,
+                "C12": C12,
+                "C13": C13,
+                "C33": C33,
+                "C44": C44,
+                "C66": C66,
+            }
+
+        # **Orthorhombic**: 9 independent constants
+        # No strict symmetry between components; all are independent.
+        elif C11 and C22 and C33 and C12 and C13 and C23 and C44 and C55 and C66:
+            return "orthorhombic", {
+                "C11": C11,
+                "C12": C12,
+                "C13": C13,
+                "C22": C22,
+                "C23": C23,
+                "C33": C33,
+                "C44": C44,
+                "C55": C55,
+                "C66": C66,
+            }
+
+        # **Monoclinic**: 13 independent constants
+        # Usually, C16, C26, and C36 are nonzero, making it more complex.
+        elif "C16" in elastic_tensor or "C26" in elastic_tensor or "C36" in elastic_tensor:
+            return "monoclinic", {
+                key: elastic_tensor[key]
+                for key in elastic_tensor
+                if key in ["C11", "C12", "C13", "C15", "C22", "C23", "C25", "C33", "C35", "C44", "C46", "C55", "C66"]
+            }
+
+        # **Triclinic**: 21 independent constants (fully asymmetric case)
+        # If no symmetry is detected, assume a fully anisotropic triclinic structure.
+        return "triclinic", elastic_tensor
+
 
     def start_validation(self, overwrite=True, local=False):
         if self.lammps_results == []:
@@ -102,6 +184,18 @@ class ElasticTensorValidation(PotentialValidation):
             percent_error["shear_modulus_hill"] = self.calculate_percent_error(
                 dft_results["shear_modulus_hill"], self.lammps_results["shear_modulus_hill"]
             )
+            structure, independent_elastic_constants = self.extract_independent_elastic_constants(dft_results["elastic_tensor"])
+            structure_lammps, independent_elastic_constants_lammps = self.extract_independent_elastic_constants(self.lammps_results["elastic_tensor"])
+            #check if the structure is the same
+            if structure != structure_lammps:
+                print(f'structure is not the same: {structure} != {structure_lammps}')
+                #add 100% error to all
+                for key in independent_elastic_constants:
+                    percent_error[key] = percent_error.get(key, 0) + 100
+                percent_error['independent_elastic_constants'] = None
+            else:
+                structure, indep_percent_error = self.compare_independent_elastic_constants(independent_elastic_constants, independent_elastic_constants_lammps)
+                percent_error['independent_elastic_constants'] = indep_percent_error
             return percent_error
         else:
             return {
@@ -118,6 +212,7 @@ class ElasticTensorValidation(PotentialValidation):
                 "shear_modulus_voigt": None,
                 "shear_modulus_reuss": None,
                 "shear_modulus_hill": None,
+                'independent_elastic_constants': None
             }
 
 
