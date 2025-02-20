@@ -465,32 +465,34 @@ def run_optuna_tpe_with_dask_hpc(
         backup_folder = backup_folder = os.path.join(base_directory, "temp_search_results", timestamp)
     else: 
         backup_folder = os.path.join(base_directory, "grid_search_results", timestamp)
-    # copy results 
-    os.makedirs(backup_folder, exist_ok=True)
-    optuna_trials_path = os.path.join(base_directory, "optuna_trials")
-    for worker_folder in os.listdir(optuna_trials_path):
-        source_path = os.path.join(optuna_trials_path, worker_folder)
-        # delete the validation folder
-        for root, dirs, files in os.walk(source_path, topdown=True):
-            for directory in dirs:
-                if "validation" in directory:
-                    validation_path = os.path.join(root, directory)
-                    shutil.rmtree(validation_path)  # Delete the validation folder
-                    print(f"Deleted validation folder: {validation_path}")
-        #move the worker folder to results folder
-        shutil.move(source_path, backup_folder)
-        print(f"Moved: {worker_folder} -> {backup_folder}")
         
-    #clear dask worker logs 
-    current_directory = os.getcwd()
+    if settings['debug'] == False:
+        # copy results 
+        os.makedirs(backup_folder, exist_ok=True)
+        optuna_trials_path = os.path.join(base_directory, "optuna_trials")
+        for worker_folder in os.listdir(optuna_trials_path):
+            source_path = os.path.join(optuna_trials_path, worker_folder)
+            # delete the validation folder
+            for root, dirs, files in os.walk(source_path, topdown=True):
+                for directory in dirs:
+                    if "validation" in directory:
+                        validation_path = os.path.join(root, directory)
+                        shutil.rmtree(validation_path)  # Delete the validation folder
+                        print(f"Deleted validation folder: {validation_path}")
+            #move the worker folder to results folder
+            shutil.move(source_path, backup_folder)
+            print(f"Moved: {worker_folder} -> {backup_folder}")
+            
+        #clear dask worker logs 
+        current_directory = os.getcwd()
 
-    for filename in os.listdir(current_directory):
-        if "dask-worker" in filename: 
-            file_path = os.path.join(current_directory, filename)
-            try:
-                os.remove(file_path)
-                print(f"Deleted: {file_path}")
-            except Exception as e:
-                print(f"Error deleting {file_path}: {e}")
+        for filename in os.listdir(current_directory):
+            if "dask-worker" in filename: 
+                file_path = os.path.join(current_directory, filename)
+                try:
+                    os.remove(file_path)
+                    print(f"Deleted: {file_path}")
+                except Exception as e:
+                    print(f"Error deleting {file_path}: {e}")
 
     print("Deletion process completed.")

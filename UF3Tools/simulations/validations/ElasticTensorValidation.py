@@ -65,15 +65,15 @@ class ElasticTensorValidation(PotentialValidation):
         Returns:
             tuple: (structure_type, dict of independent elastic constants)
         """
-        C11 = elastic_tensor.get("C11", None)
-        C12 = elastic_tensor.get("C12", None)
-        C13 = elastic_tensor.get("C13", None)
-        C22 = elastic_tensor.get("C22", None)
-        C23 = elastic_tensor.get("C23", None)
-        C33 = elastic_tensor.get("C33", None)
-        C44 = elastic_tensor.get("C44", None)
-        C55 = elastic_tensor.get("C55", None)
-        C66 = elastic_tensor.get("C66", None)
+        C11 = elastic_tensor.get("C11all", None)
+        C12 = elastic_tensor.get("C12all", None)
+        C13 = elastic_tensor.get("C13all", None)
+        C22 = elastic_tensor.get("C22all", None)
+        C23 = elastic_tensor.get("C23all", None)
+        C33 = elastic_tensor.get("C33all", None)
+        C44 = elastic_tensor.get("C44all", None)
+        C55 = elastic_tensor.get("C55all", None)
+        C66 = elastic_tensor.get("C66all", None)
 
         # **Cubic**: 3 independent constants
         # Conditions: C11 = C22 = C33, C12 = C13 = C23, C44 = C55 = C66
@@ -147,19 +147,16 @@ class ElasticTensorValidation(PotentialValidation):
             if self.has_dft_data:
                 dft_results = self.dft_data
             percent_error = {}
-
-            dft_elastic_tensor_dict = {
-                "C11all": dft_results["elastic_tensor"][0][0],
-                "C12all": dft_results["elastic_tensor"][0][1],
-                "C13all": dft_results["elastic_tensor"][0][2],
-                "C22all": dft_results["elastic_tensor"][1][1],
-                "C23all": dft_results["elastic_tensor"][1][2],
-                "C33all": dft_results["elastic_tensor"][2][2],
-                "C44all": dft_results["elastic_tensor"][3][3],
-                "C55all": dft_results["elastic_tensor"][4][4],
-                "C66all": dft_results["elastic_tensor"][5][5],
-            }
-
+            dft_elastic_tensor_dict = {}
+            for i in range(6):
+                for j in range(6):
+                    key = f"C{i+1}{j+1}all"
+                    dft_elastic_tensor_dict[key] = dft_results["elastic_tensor"][i][j]
+            #make sure no results are none
+            print(f'dft elastic tensor dict: {dft_elastic_tensor_dict}')
+            for key in dft_elastic_tensor_dict:
+                if dft_elastic_tensor_dict[key] is None:
+                    dft_elastic_tensor_dict[key] = 0
             if isinstance(self.lammps_results, list):
                 self.lammps_results = self.lammps_results[0]
 
@@ -169,7 +166,7 @@ class ElasticTensorValidation(PotentialValidation):
             for key in dft_elastic_tensor_dict:
                 lammps_value = lammps_elastic_tensor.get(key, None)
                 dft_value = dft_elastic_tensor_dict[key]
-                if lammps_value is not None and dft_value is not None:
+                if (lammps_value is not None and dft_value is not None) and (lammps_value != 0 and dft_value != 0):
                     percent_error[key] = self.calculate_percent_error(dft_value, lammps_value)
 
             percent_error["bulk_modulus_voigt"] = self.calculate_percent_error(
@@ -184,22 +181,12 @@ class ElasticTensorValidation(PotentialValidation):
             percent_error["shear_modulus_hill"] = self.calculate_percent_error(
                 dft_results["shear_modulus_hill"], self.lammps_results["shear_modulus_hill"]
             )
-            structure, independent_elastic_constants = self.extract_independent_elastic_constants(dft_results["elastic_tensor"])
-            structure_lammps, independent_elastic_constants_lammps = self.extract_independent_elastic_constants(self.lammps_results["elastic_tensor"])
-            #check if the structure is the same
-            if structure != structure_lammps:
-                print(f'structure is not the same: {structure} != {structure_lammps}')
-                #add 100% error to all
-                for key in independent_elastic_constants:
-                    percent_error[key] = percent_error.get(key, 0) + 100
-                percent_error['independent_elastic_constants'] = None
-            else:
-                structure, indep_percent_error = self.extract_independent_elastic_constants(percent_error)
-                indep_error = 0
-                for key in indep_percent_error:
-                    indep_error += indep_percent_error[key]
-                indep_error /= len(indep_percent_error)
-                percent_error['independent_elastic_constants'] = indep_error
+            structure, indep_percent_error = self.extract_independent_elastic_constants(percent_error)
+            indep_error = 0
+            for key in indep_percent_error:
+                indep_error += indep_percent_error[key]
+            indep_error /= len(indep_percent_error)
+            percent_error['independent_elastic_constants'] = indep_error
             return percent_error
         else:
             return {
