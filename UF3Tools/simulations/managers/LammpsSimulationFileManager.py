@@ -55,4 +55,11 @@ class LammpsSimulationFileManager(SimulationManager):
         if isinstance(simulation, type):  # If `simulation` is a class, create an instance
             raise TypeError(f"Expected an instance of LammpsSimulation, but got a class {simulation}")
         simulation.set_potential_file(potential_file)
-        
+    def set_input_file(self, input_file):
+        """
+        Set the input file for the LAMMPS simulation.
+
+        :param input_file: The path to the input file.
+        """
+        self.input_file = input_file
+        self.register_simulation_file(input_file)

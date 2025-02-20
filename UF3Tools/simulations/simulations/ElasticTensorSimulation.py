@@ -2,17 +2,14 @@ import os
 import re
 from ..common.LammpsInputFileHandler import LammpsInputFileHandler
 from ..common.DFTDataParser import DFTDataParser
-from .Simulation import LammpsSimulation
+from .Simulation import CompleteLammpsSimulation
 
-class ElasticTensorSimulation(LammpsSimulation):
+class ElasticTensorSimulation(CompleteLammpsSimulation):
     simulation_type = "ElasticTensor"
     result_type = "elastic_tensor"
-    def __init__(self, simulation_directory, input_file, parameters=None):
+    def __init__(self, input_file, model_file, potential_file, simulation_root_directory = os.getcwd(), run_script = "start_simulation.sh", simulation_name = None, extra_files = [], parameters=None):
         self.original_directory = os.getcwd()
-        if(self.simulation_type not in simulation_directory):
-            simulation_directory = os.path.join(simulation_directory, (self.simulation_type+'Simulation'))
-        self.simulation_directory = os.path.abspath(simulation_directory)
-        self.input_file = os.path.join(simulation_directory, input_file)
+        self.input_file = os.path.abspath(input_file)
         self.parameters = {
             'atom_style': 'atomic',
             'change_box': '',
@@ -28,7 +25,9 @@ class ElasticTensorSimulation(LammpsSimulation):
         }
         if parameters is not None:
             self.parameters.update(parameters)
-        super().__init__(self.simulation_directory, input_file, self.parameters)
+        if simulation_name is None:
+            simulation_name = self.simulation_type
+        super().__init__(simulation_name, os.path.abspath(input_file), os.path.abspath(model_file), os.path.abspath(potential_file),simulation_root_directory, run_script, extra_files, parameters=self.parameters)
     def process_simulation_results(self):
         #initialize 
         lammps_data = {

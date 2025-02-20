@@ -24,7 +24,7 @@ class PotentialValidation:
     def get_required_supercell(cls):
         return cls.required_supercell
 
-    def __init__(self, simulation_type, potential_file, lammps_model_file, dft_model_file, element_list, root_directory, use_dft=False):
+    def __init__(self, simulation_type, potential_file, lammps_model_file, dft_model_file, element_list, root_directory, run_scripts, use_dft=False):
         # Ensure all file paths are absolute
         self.potential_file = os.path.abspath(potential_file)
         self.lammps_model_file = os.path.abspath(lammps_model_file)
@@ -45,23 +45,19 @@ class PotentialValidation:
         self.has_dft_data = False
         self.simulation_type = simulation_type
         self.simulation = None
+        self.run_scripts = run_scripts
 
         # Ensure root directory exists
         os.makedirs(self.root_directory, exist_ok=True)
 
         # Initialize simulation managers with absolute paths
-        self.lammps_manager = LammpsSimulationFileManager(self.root_directory)
-        self.dft_manager = DFTSimulationManager(self.root_directory)
+        self.lammps_manager = None
+        self.dft_manager = None
         self.dft_result = {}
         self.lammps_results = []
     def setup_input_file(self, template_file, output_file, parameters=None):
-        handler = LammpsInputFileHandler(template_file, output_file, **parameters)
+        handler = LammpsInputFileHandler(template_file, output_file, parameters)
         handler.generate_input_file()
-    def initialize_simulation_files(self):
-        print(f"Initializing simulation files in: {self.root_directory}")
-        self.lammps_manager.set_potential_file(self.potential_file, self.simulation)
-        self.lammps_manager.set_model_file(self.lammps_model_file)
-
     def get_simulation(self):
         return self.simulation
 

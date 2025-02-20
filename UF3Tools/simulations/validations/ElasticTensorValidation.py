@@ -7,7 +7,7 @@ class ElasticTensorValidation(PotentialValidation):
         return None
     computational_weight=2
     required_supercell = (2,2,2)
-    def __init__(self, potential_file, lammps_model_file, dft_model_file, element_list, validation_folder_path, parameters=None):
+    def __init__(self, potential_file, lammps_model_file, dft_model_file, element_list, validation_folder_path, run_scripts, template_directory, parameters=None):
         abs_validation_path = os.path.abspath(validation_folder_path)
         super().__init__(
             "ElasticTensorSimulation",
@@ -16,6 +16,7 @@ class ElasticTensorValidation(PotentialValidation):
             dft_model_file,
             element_list,
             abs_validation_path,
+            run_scripts,
             use_dft=False
         )
         self.default_kwargs = {
@@ -37,19 +38,20 @@ class ElasticTensorValidation(PotentialValidation):
         self.lammps_data = dict(self.dft_data)
         self.use_dft = False
 
-        self.lammps_manager.setup_simulation(self.simulation_type)
         self.sim_template_file = os.path.join(
-            self.lammps_manager.get_template_directory(),
+            template_directory,
             "in.elastic"
         )
         self.input_file = "lammps.in"
-        self.setup_input_file(self.sim_template_file, os.path.join(self.lammps_manager.get_root_directory(), self.input_file), self.kwargs)
         self.simulation = ElasticTensorSimulation(
-            self.lammps_manager.get_root_directory(),
-            self.input_file,
-            parameters
+            self.sim_template_file,
+            self.lammps_model_file,
+            self.potential_file,
+            os.path.join(validation_folder_path, 'lammps', 'simulations'),
+            run_scripts['lammps'],
+            parameters=parameters
         )
-        self.initialize_simulation_files()
+        self.setup_input_file(os.path.join(self.simulation.get_directory(), self.sim_template_file), os.path.join(self.simulation.get_directory(), self.input_file), self.simulation.get_parameters())
 
     def retrieve_dft_result(self, path):
         from ..common.DFTDataParser import DFTDataParser
@@ -144,10 +146,7 @@ class ElasticTensorValidation(PotentialValidation):
 
 
     def start_validation(self, overwrite=True, local=False):
-        if self.lammps_results == []:
-            self.lammps_manager.set_potential_file(self.potential_file, self.simulation)
-            self.lammps_manager.set_model_file(self.lammps_model_file)
-            self.lammps_results = self.simulation.run(overwrite=overwrite, local=local)
+        self.lammps_results = self.simulation.run(overwrite=overwrite, local=local)
         print(f'lammps results: {self.lammps_results}')
         print(f'has dft data: {self.dft_data}')
         if self.lammps_results and ((self.use_dft and self.dft_data) or self.has_dft_data):

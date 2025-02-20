@@ -34,7 +34,7 @@ class ValidationManager:
         'surface_energy': "dft/simulations/SurfaceEnergySimulation/"
     }
 
-    def __init__(self, potential_version, structure_id, potential_file, lammps_model_file, dft_model_file, element_list, validation_folder_path, validations_to_run, **kwargs):
+    def __init__(self, potential_version, structure_id, potential_file, lammps_model_file, dft_model_file, element_list, validation_folder_path, validations_to_run, kwargs=None):
         self.potential_file = os.path.abspath(potential_file)
         self.lammps_model_file = os.path.abspath(lammps_model_file)
         self.dft_model_file = os.path.abspath(dft_model_file)
@@ -45,13 +45,21 @@ class ValidationManager:
         self.base_simulations_required = []
         self.base_results = {}
         self.base_simulation_objects = {}
+        self.lammps_directory = os.path.join(self.validation_folder_path, "lammps")
+        self.lammps_simulation_root_directory = os.path.join(self.lammps_directory, "simulations")
+        self.template_directory = os.path.join(self.lammps_directory, "templates")
+        self.basic_files_directory = os.path.join(self.lammps_directory, "basic_files")
+        self.run_scripts = {
+            'lammps': os.path.join(self.basic_files_directory, "start_simulation_hpg.sh"),
+            'dft': os.path.join(self.basic_files_directory, "start_simulation_dft.sh")
+        }
         self.validation_data = ValidationData(potential_version, potential_file, structure_id)
 
     def get_validation_data(self):
         return self.validation_data
     def setup_input_file(self, template_file, output_file, parameters=None):
         print('setup input file params: ', parameters)
-        handler = LammpsInputFileHandler(template_file, output_file, **parameters)
+        handler = LammpsInputFileHandler(template_file, output_file, parameters)
         handler.generate_input_file()
     def run_validation(self, overwrite=True, local=False):
         """
@@ -66,29 +74,28 @@ class ValidationManager:
 
         # Remove duplicates
         base_simulations = list(set(self.base_simulations_required))
-
+        
         # Run base simulations
         for base_simulation in base_simulations:
-            manager = LammpsSimulationFileManager(self.validation_folder_path)
-            manager.setup_simulation(base_simulation.get_id())
             sim_template_file = os.path.join(
-                manager.get_template_directory(),
+                self.template_directory,
                 self.template_file_lut[base_simulation.get_id()]
             )
             input_file = "lammps.in"
-            
             base_simulation_instance = base_simulation(
-                manager.get_root_directory(),
-                input_file,
-                **self.kwargs
+                sim_template_file,
+                self.lammps_model_file,
+                self.potential_file,
+                self.lammps_simulation_root_directory,
+                self.run_scripts['lammps'],
+                parameters=self.kwargs
             )
+            self.setup_input_file(os.path.join(base_simulation_instance.get_directory(), sim_template_file), os.path.join(base_simulation_instance.get_directory(), input_file), base_simulation_instance.get_parameters())
+           
             print(f'potential file: {self.potential_file}')
-            print(f'base simulation locations: {manager.get_simulation_directory()}')
+            print(f'base simulation locations: {base_simulation_instance.get_directory()}')
             print(f'lammps model file: {self.lammps_model_file}')
-            manager.set_potential_file(self.potential_file, base_simulation_instance)
-            manager.set_model_file(self.lammps_model_file)
             print(f' base simulation params: {base_simulation_instance.get_parameters()}')
-            self.setup_input_file(sim_template_file, os.path.join(base_simulation_instance.get_directory(), input_file), base_simulation_instance.get_parameters())
            
 
             # Run simulation
@@ -121,7 +128,9 @@ class ValidationManager:
                 self.dft_model_file,
                 self.element_list,
                 self.validation_folder_path,
-                self.kwargs
+                self.run_scripts,
+                self.template_directory,
+                parameters=self.kwargs
             )
 
             # Assign required base simulations
