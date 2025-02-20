@@ -130,23 +130,18 @@ def loss_function(avg_result, normalized_error, acceptable_errors, weights):
     shear_modulus = (avg_result.get('shear_modulus_voigt', 0) + avg_result.get('shear_modulus_reuss', 0)) / 2
     lattice_constants = (avg_result.get('a', 0) + avg_result.get('b', 0) + avg_result.get('c', 0)) / 3
     
-    elastic_constants = [
-        avg_result.get('C11all', 0), avg_result.get('C12all', 0), avg_result.get('C13all', 0),
-        avg_result.get('C22all', 0), avg_result.get('C23all', 0), avg_result.get('C33all', 0),
-        avg_result.get('C44all', 0), avg_result.get('C55all', 0), avg_result.get('C66all', 0)
-    ]
-    avg_elastic_constant = sum(elastic_constants) / len(elastic_constants)
+    indep_elastic = avg_result.get('independent_elastic_constants', 0)
     surface_energy = avg_result.get('surface_energy', 0)
     
     
     # Normalize errors by acceptable thresholds
     norm_cohesive = abs(cohesive_energy) / acceptable_errors['cohesive_energy']
-    norm_elastic = abs(avg_elastic_constant) / acceptable_errors['elastic_constants']
     norm_bulk = abs(bulk_modulus) / acceptable_errors['bulk_modulus']
     norm_shear = abs(shear_modulus) / acceptable_errors['shear_modulus']
     norm_lattice = abs(lattice_constants) / acceptable_errors['lattice_constants']
     norm_error = abs(normalized_error) / acceptable_errors['normalized_error']
     norm_surface_energy = abs(surface_energy) / acceptable_errors['surface_energy']
+    norm_indep_elastic = abs(indep_elastic) / acceptable_errors['elastic_tensor']
     
     # Weights (adjustable for importance)
     weight_cohesive = weights['cohesive']
@@ -160,7 +155,7 @@ def loss_function(avg_result, normalized_error, acceptable_errors, weights):
     # Calculate loss with normalized errors
     loss = (
         weight_cohesive * norm_cohesive +
-        weight_elastic * norm_elastic +
+        weight_elastic * norm_indep_elastic +
         weight_bulk * norm_bulk +
         weight_shear * norm_shear +
         weight_lattice * norm_lattice +

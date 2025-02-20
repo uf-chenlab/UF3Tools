@@ -194,8 +194,12 @@ class ElasticTensorValidation(PotentialValidation):
                     percent_error[key] = percent_error.get(key, 0) + 100
                 percent_error['independent_elastic_constants'] = None
             else:
-                structure, indep_percent_error = self.compare_independent_elastic_constants(independent_elastic_constants, independent_elastic_constants_lammps)
-                percent_error['independent_elastic_constants'] = indep_percent_error
+                structure, indep_percent_error = self.extract_independent_elastic_constants(percent_error)
+                indep_error = 0
+                for key in indep_percent_error:
+                    indep_error += indep_percent_error[key]
+                indep_error /= len(indep_percent_error)
+                percent_error['independent_elastic_constants'] = indep_error
             return percent_error
         else:
             return {
