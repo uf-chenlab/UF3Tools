@@ -6,7 +6,7 @@ class ElasticTensorValidation(PotentialValidation):
     def get_required_base_simulations(cls):
         return None
     computational_weight=2
-    required_supercell = (4,4,4)
+    required_supercell = (2,2,2)
     def __init__(self, potential_file, lammps_model_file, dft_model_file, element_list, validation_folder_path, **kwargs):
         abs_validation_path = os.path.abspath(validation_folder_path)
         super().__init__(
@@ -93,12 +93,6 @@ class ElasticTensorValidation(PotentialValidation):
             percent_error["bulk_modulus_voigt"] = self.calculate_percent_error(
                 dft_results["bulk_modulus_voigt"], self.lammps_results["bulk_modulus_voigt"]
             )
-            percent_error["bulk_modulus_reuss"] = self.calculate_percent_error(
-                dft_results["bulk_modulus_reuss"], self.lammps_results["bulk_modulus_reuss"]
-            )
-            percent_error["bulk_modulus_hill"] = self.calculate_percent_error(
-                dft_results["bulk_modulus_hill"], self.lammps_results["bulk_modulus_hill"]
-            )
             percent_error["shear_modulus_voigt"] = self.calculate_percent_error(
                 dft_results["shear_modulus_voigt"], self.lammps_results["shear_modulus_voigt"]
             )
@@ -121,8 +115,6 @@ class ElasticTensorValidation(PotentialValidation):
                 "C55all": None,
                 "C66all": None,
                 "bulk_modulus_voigt": None,
-                "bulk_modulus_reuss": None,
-                "bulk_modulus_hill": None,
                 "shear_modulus_voigt": None,
                 "shear_modulus_reuss": None,
                 "shear_modulus_hill": None,

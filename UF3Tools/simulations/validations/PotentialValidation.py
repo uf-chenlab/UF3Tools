@@ -116,7 +116,7 @@ class PotentialValidation:
             return None
         if lammps_data is None:
             return None
-        return abs(lammps_data - dft_data) / dft_data * 100
+        return abs(abs(lammps_data - dft_data) / dft_data * 100)
 
 class ValidationData:
     def __init__(self, potential_version, potential_file, structure):

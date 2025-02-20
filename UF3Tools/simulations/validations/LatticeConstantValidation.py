@@ -5,7 +5,7 @@ class LatticeConstantValidation(PotentialValidation):
     def get_required_base_simulations(cls):
         return LatticeConstantSimulation.get_required_sub_simulations()
     computational_weight=1
-    required_supercell = (4,4,4)
+    required_supercell = (1,1,1)
     def __init__(self, potential_file, lammps_model_file, dft_model_file, element_list, validation_folder_path, **kwargs):
         abs_validation_path = os.path.abspath(validation_folder_path)
         super().__init__(
