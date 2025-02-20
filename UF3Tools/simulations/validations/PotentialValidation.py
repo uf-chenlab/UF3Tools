@@ -2,9 +2,8 @@ import os
 import shutil 
 import numpy as np
 from ..managers.DFTSimulationManager import DFTSimulationManager
-from ..managers.LammpsSimulationFileManager import LammpsSimulationFileManager   
-from ..simulations.Simulation import LammpsSimulation
-from ..common.DFTDataParser import DFTDataParser
+from ..managers.LammpsSimulationFileManager import LammpsSimulationFileManager  
+from ..common.LammpsInputFileHandler import LammpsInputFileHandler 
 import ast
 
 class PotentialValidation:
@@ -55,7 +54,9 @@ class PotentialValidation:
         self.dft_manager = DFTSimulationManager(self.root_directory)
         self.dft_result = {}
         self.lammps_results = []
-
+    def setup_input_file(self, template_file, output_file, parameters=None):
+        handler = LammpsInputFileHandler(template_file, output_file, **parameters)
+        handler.generate_input_file()
     def initialize_simulation_files(self):
         print(f"Initializing simulation files in: {self.root_directory}")
         self.lammps_manager.set_potential_file(self.potential_file, self.simulation)

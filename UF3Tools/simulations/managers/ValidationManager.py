@@ -1,4 +1,6 @@
-import os 
+import os
+
+from UF3Tools.simulations.common.LammpsInputFileHandler import LammpsInputFileHandler 
 from ..validations.CohesiveEnergyValidation import CohesiveEnergyValidation
 from ..validations.ElasticTensorValidation import ElasticTensorValidation
 from ..validations.LangevinValidation import LangevinValidation
@@ -14,6 +16,15 @@ class ValidationManager:
         "surface_energy": SurfaceEnergyValidation,
         "lattice_constant": LatticeConstantValidation,
         "langevin": LangevinValidation
+    }
+    
+    template_file_lut = {
+        'LatticeConstant': "in.lattice",
+        'CohesiveEnergy': "in.cohesive",
+        'ElasticTensor': "in.elastic",
+        'SurfaceEnergy': "in.surface",
+        'Langevin': "in.langevin",
+        'BaseRelaxation': "in.base_relax"
     }
     
     dft_results_lut = {
@@ -38,7 +49,10 @@ class ValidationManager:
 
     def get_validation_data(self):
         return self.validation_data
-
+    def setup_input_file(self, template_file, output_file, parameters=None):
+        print('setup input file params: ', parameters)
+        handler = LammpsInputFileHandler(template_file, output_file, **parameters)
+        handler.generate_input_file()
     def run_validation(self, overwrite=True, local=False):
         """
         Run the validation process without using os.chdir().
@@ -57,10 +71,15 @@ class ValidationManager:
         for base_simulation in base_simulations:
             manager = LammpsSimulationFileManager(self.validation_folder_path)
             manager.setup_simulation(base_simulation.get_id())
-
-            base_simulation_instance = base_simulation(
-                manager.get_simulation_directory(),
+            sim_template_file = os.path.join(
                 manager.get_template_directory(),
+                self.template_file_lut[base_simulation.get_id()]
+            )
+            input_file = "lammps.in"
+            
+            base_simulation_instance = base_simulation(
+                manager.get_root_directory(),
+                input_file,
                 **self.kwargs
             )
             print(f'potential file: {self.potential_file}')
@@ -68,6 +87,9 @@ class ValidationManager:
             print(f'lammps model file: {self.lammps_model_file}')
             manager.set_potential_file(self.potential_file, base_simulation_instance)
             manager.set_model_file(self.lammps_model_file)
+            print(f' base simulation params: {base_simulation_instance.get_parameters()}')
+            self.setup_input_file(sim_template_file, os.path.join(base_simulation_instance.get_directory(), input_file), base_simulation_instance.get_parameters())
+           
 
             # Run simulation
             result = base_simulation_instance.run(overwrite=overwrite, local=local)
@@ -99,7 +121,7 @@ class ValidationManager:
                 self.dft_model_file,
                 self.element_list,
                 self.validation_folder_path,
-                **self.kwargs
+                self.kwargs
             )
 
             # Assign required base simulations

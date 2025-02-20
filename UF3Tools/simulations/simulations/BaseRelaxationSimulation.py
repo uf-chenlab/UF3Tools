@@ -7,20 +7,18 @@ from ..common.DFTDataParser import DFTDataParser
 class BaseRelaxationSimulation(BaseSimulation):
     simulation_type = "BaseRelaxation"
     required_supercell = (1,1,1)
-    def __init__(self, simulation_directory, template_directory, **kwargs):
+    def __init__(self, simulation_directory, input_file, parameters=None):
         """
         Initialize the RelaxationSimulation with a simulation directory and any additional parameters.
 
         :param simulation_directory: The directory where the relaxation simulation will be set up.
         :param kwargs: Additional parameters for setting up the simulation.
         """
-        abs_sim_dir = os.path.abspath(simulation_directory)
-        abs_template_dir = os.path.abspath(template_directory)
-        final_sim_path = os.path.join(abs_sim_dir)
-        self.template_file = os.path.join(abs_template_dir, "in.base_relax")
-        self.simulation_directory = final_sim_path
-        self.output_file = os.path.join(final_sim_path, "lammps.in")
         self.original_directory = os.getcwd()
+        if(self.simulation_type not in simulation_directory):
+            simulation_directory = os.path.join(simulation_directory, (self.simulation_type+'Simulation'))
+        self.simulation_directory = os.path.abspath(simulation_directory)
+        self.input_file = os.path.join(simulation_directory, input_file)
         self.parameters = {
             'atom_style': 'atomic',
             'x_boundary': 'p',
@@ -37,15 +35,9 @@ class BaseRelaxationSimulation(BaseSimulation):
             'maxiter': '10000',
             'maxeval': '50000'
         }
-        self.parameters.update(kwargs)
-        super().__init__(
-            final_sim_path, 
-            abs_template_dir,
-            "in.base_relax",
-            "lammps.in",
-            self.parameters,
-            **kwargs
-        )
+        if parameters is not None:
+            self.parameters.update(parameters)
+        super().__init__(self.simulation_directory, input_file, self.parameters)
     
     def get_result(self):
         if(self.result != {}):

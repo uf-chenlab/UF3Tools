@@ -7,15 +7,12 @@ class CohesiveEnergySimulation(CompoundSimulation):
     required_sub_simulations = [BaseRelaxationSimulation]
     simulation_type = "CohesiveEnergy"
     result_type = "cohesive_energy"
-    def __init__(self, simulation_directory, template_directory, sub_simulations, **kwargs):
-        abs_sim_dir = os.path.abspath(simulation_directory)
-        abs_template_dir = os.path.abspath(template_directory)
-
-        final_sim_path = os.path.join(abs_sim_dir, self.simulation_type + "Simulation")
-        self.simulation_directory = final_sim_path
-        self.template_file_name = 'in.cohesive'
-        self.output_file = os.path.join(final_sim_path, "lammps.in")
-
+    def __init__(self, simulation_directory, input_file, sub_simulations=None, parameters=None):
+        self.original_directory = os.getcwd()
+        if(self.simulation_type not in simulation_directory):
+            simulation_directory = os.path.join(simulation_directory, (self.simulation_type+'Simulation'))
+        self.simulation_directory = os.path.abspath(simulation_directory)
+        self.input_file = os.path.join(simulation_directory, input_file)
         self.parameters = {
             'atom_style': 'atomic',
             'x_boundary': 'p',
@@ -32,17 +29,9 @@ class CohesiveEnergySimulation(CompoundSimulation):
             'maxiter': '10000',
             'maxeval': '50000'
         }
-        self.parameters.update(kwargs)
-
-        super().__init__(
-            final_sim_path,
-            abs_template_dir,
-            self.template_file_name,
-            "lammps.in",
-            self.parameters,
-            sub_simulations,
-            **kwargs
-        )
+        if parameters is not None:
+            self.parameters.update(parameters)
+        super().__init__(self.simulation_directory, input_file, sub_simulations, self.parameters)
     def process_simulation_results(self):
         if(self.sub_simulations == {}):
             return {}

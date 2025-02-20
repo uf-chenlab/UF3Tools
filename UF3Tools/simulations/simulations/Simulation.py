@@ -1,7 +1,5 @@
 import os 
 import subprocess
-from ..common.LammpsInputFileHandler import LammpsInputFileHandler
-from ..common.DFTDataParser import DFTDataParser
 import re
 
 class LammpsSimulation:
@@ -13,18 +11,12 @@ class LammpsSimulation:
         return cls.result_type
     def __init__(self, 
                  simulation_directory, 
-                 template_directory, 
-                 template_file, 
-                 output_file,
-                 parameters=None,
-                 **kwargs):
+                 input_file,
+                 parameters=None):
         self.simulation_directory = os.path.abspath(simulation_directory)
-        self.template_file = os.path.join(template_directory, template_file)
-        self.output_file = os.path.join(self.simulation_directory, output_file)
+        self.input_file = os.path.abspath(input_file)
         self.parameters = parameters or {}
-        self.parameters.update(kwargs)
         self.result = {}
-        self.setup_input_file()
     def run(self, local=False, overwrite=False):
         # Parallel safe because it's only changing the cwd of the subprocess, not the process globally
         if local:
@@ -34,15 +26,12 @@ class LammpsSimulation:
 
         subprocess.run(command, shell=True, cwd=self.simulation_directory)
         return self.process_simulation_results()
+    def get_input_file_path(self):
+        return self.input_file
     def set_potential_file(self, potential_file):
         print(f"setting potential file: {potential_file}, {os.getcwd()}")
         self.parameters['uf3_file'] = potential_file
-        self.setup_input_file()
-    
-    def setup_input_file(self):
-        handler = LammpsInputFileHandler(self.template_file, self.output_file)
-        handler.update_simulation_parameters(**self.parameters)
-        handler.generate_input_file()
+        print(f'parameters total: {self.parameters}')
     def get_directory(self):
         return self.simulation_directory
     def check_existing_results(self):
@@ -66,17 +55,16 @@ class LammpsSimulation:
         except:
             print(f"Error: Could not open file {result_file}")
             return None
+    def get_parameters(self):
+        return self.parameters
     
 class BaseSimulation(LammpsSimulation):
     def __init__(self, 
-                 simulation_directory, 
-                 template_directory, 
-                 template_file, 
-                 output_file,
-                 parameters=None,
-                 **kwargs):
+                 simulation_directory,
+                 input_file,
+                 parameters=None):
         
-        super().__init__(simulation_directory, template_directory, template_file, output_file, parameters, **kwargs)
+        super().__init__(simulation_directory, input_file, parameters)
     def process_simulation_results(self):
         raise NotImplementedError("Subclasses must implement this method")
     def get_result(self):
@@ -93,14 +81,11 @@ class CompoundSimulation(LammpsSimulation):
         return cls.required_sub_simulations
     def __init__(self, 
                  simulation_directory, 
-                 template_directory, 
-                 template_file, 
-                 output_file,
-                 parameters=None,
-                 sub_simulations=None,
-                 **kwargs):
+                 input_file,
+                 sub_simulations = None,
+                 parameters=None):
         
-        super().__init__(simulation_directory, template_directory, template_file, output_file, parameters, **kwargs)
+        super().__init__(simulation_directory, input_file, parameters)
         self.sub_simulations = sub_simulations or {}
     def process_simulation_results(self):
         raise NotImplementedError("Subclasses must implement this method")

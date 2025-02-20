@@ -1,5 +1,5 @@
 class LammpsInputFileHandler():
-    def __init__(self, template_file, output_file):
+    def __init__(self, template_file, output_file, **parameters):
         """
         Initializes the LammpsInputFileHandler with a template file and output file.
 
@@ -9,10 +9,8 @@ class LammpsInputFileHandler():
         """
         self.template_file = template_file
         self.output_file = output_file
-        self.parameters = {}
-
-    def update_simulation_parameters(self, **kwargs):
-        self.parameters = kwargs
+        self.parameters = parameters
+        print(f'input file handler parameters: {self.parameters}')
 
     def generate_input_file(self):
         with open(self.template_file, 'r') as file:

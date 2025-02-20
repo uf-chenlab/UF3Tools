@@ -7,11 +7,12 @@ from .Simulation import LammpsSimulation
 class ElasticTensorSimulation(LammpsSimulation):
     simulation_type = "ElasticTensor"
     result_type = "elastic_tensor"
-    def __init__(self, simulation_directory, template_directory, **kwargs):
-        self.template_file_name = 'in.elastic'
+    def __init__(self, simulation_directory, input_file, parameters=None):
         self.original_directory = os.getcwd()
-        self.simulation_directory = os.path.join(simulation_directory, (self.simulation_type+'Simulation'))
-        self.output_file = os.path.join(simulation_directory, "lammps.in")
+        if(self.simulation_type not in simulation_directory):
+            simulation_directory = os.path.join(simulation_directory, (self.simulation_type+'Simulation'))
+        self.simulation_directory = os.path.abspath(simulation_directory)
+        self.input_file = os.path.join(simulation_directory, input_file)
         self.parameters = {
             'atom_style': 'atomic',
             'change_box': '',
@@ -25,8 +26,9 @@ class ElasticTensorSimulation(LammpsSimulation):
             'maxiter': '10000',
             'maxeval': '50000'
         }
-        self.parameters.update(kwargs)
-        super().__init__(self.simulation_directory, os.path.join(template_directory, (self.simulation_type + 'Simulation')), self.template_file_name, "lammps.in", self.parameters, **kwargs)
+        if parameters is not None:
+            self.parameters.update(parameters)
+        super().__init__(self.simulation_directory, input_file, self.parameters)
     def process_simulation_results(self):
         #initialize 
         lammps_data = {

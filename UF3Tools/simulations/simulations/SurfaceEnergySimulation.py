@@ -7,14 +7,12 @@ from .Simulation import LammpsSimulation
 class SurfaceEnergySimulation(LammpsSimulation):
     simulation_type = "SurfaceEnergy"
     result_type = "surface_energy"
-    def __init__(self, simulation_directory, template_directory, **kwargs):
-        abs_sim_dir = os.path.abspath(simulation_directory)
-        abs_template_dir = os.path.abspath(template_directory)
-        final_sim_path = os.path.join(abs_sim_dir, self.simulation_type + "Simulation")
-
-        self.template_file_name = "in.surface"
-        self.simulation_directory = final_sim_path
-        self.output_file = os.path.join(final_sim_path, "lammps.in")
+    def __init__(self, simulation_directory, input_file, parameters=None):
+        self.original_directory = os.getcwd()
+        if(self.simulation_type not in simulation_directory):
+            simulation_directory = os.path.join(simulation_directory, (self.simulation_type+'Simulation'))
+        self.simulation_directory = os.path.abspath(simulation_directory)
+        self.input_file = os.path.join(simulation_directory, input_file)
 
         self.parameters = {
             "atom_style": "atomic",
@@ -29,16 +27,9 @@ class SurfaceEnergySimulation(LammpsSimulation):
             "maxiter": "10000",
             "maxeval": "50000",
         }
-        self.parameters.update(kwargs)
-
-        super().__init__(
-            self.simulation_directory,
-            os.path.join(abs_template_dir, self.simulation_type + "Simulation"),
-            self.template_file_name,
-            "lammps.in",
-            self.parameters,
-            **kwargs
-        )
+        if parameters is not None:
+            self.parameters.update(parameters)
+        super().__init__(self.simulation_directory, input_file, self.parameters)
 
     def process_simulation_results(self):
         self.result["bulk_energy"] = self._read_bulk_energy()
