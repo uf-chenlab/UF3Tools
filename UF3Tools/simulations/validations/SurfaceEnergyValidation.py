@@ -54,7 +54,6 @@ class SurfaceEnergyValidation(PotentialValidation):
         print(f' simulation params: {self.simulation.get_parameters()}')
         self.setup_input_file(os.path.join(self.simulation.get_directory(), self.sim_template_file), os.path.join(self.simulation.get_directory(), self.input_file), self.simulation.get_parameters())
 
-
     def retrieve_dft_result(self, path):
         from ..common.DFTDataParser import DFTDataParser
         abs_path = os.path.abspath(path)

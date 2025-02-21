@@ -339,10 +339,21 @@ def objective(trial, client, settings):
 
     params = (ridge_1b, ridge_2b, ridge_3b, curvature_2b, curvature_3b, weight)
     
-    if(settings['optimize_sample_weights'] == True):
+    if settings['optimize_sample_weights']:
         sample_weights = {}
+        raw_weights = []
+        
         for key in settings["sample_weights_to_optimize"]:
-            sample_weights[key] = trial.suggest_float(f"sample_weights_{key}", 0.01, 1.0, log=False)
+            raw_weight = trial.suggest_float(f"sample_weights_{key}", 0.01, 1.0, log=False)
+            raw_weights.append(raw_weight)
+
+        # Normalize so they sum to 1
+        weight_sum = sum(raw_weights)
+        normalized_weights = [w / weight_sum for w in raw_weights]
+
+        for key, norm_weight in zip(settings["sample_weights_to_optimize"], normalized_weights):
+            sample_weights[key] = norm_weight
+
         settings['sample_weights'].update(sample_weights)
 
     # Submit the training/validation to a worker
