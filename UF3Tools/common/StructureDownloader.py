@@ -122,6 +122,11 @@ class StructureDownloader:
     def download_single_structure(self, mpid, directory):
         # Get the structure
         print(f"Downloading structure for {mpid}")
+        #check if the structure is already downloaded
+        if os.path.exists(os.path.join(directory, f'POSCAR_{mpid.split("-")[1]}')):
+            print(f"Structure for {mpid} already downloaded.")
+            return
+        
         structure = self.mpr.get_structure_by_material_id(mpid)
         print(f"Downloaded structure for {mpid}")
         # Print information about the primitive unit cell

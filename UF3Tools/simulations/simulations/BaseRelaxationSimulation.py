@@ -14,8 +14,6 @@ class BaseRelaxationSimulation(BaseSimulation):
             'z_boundary': 'p',
             'change_box': '',
             'uf3_degree': '3',
-            'uf3_file': 'AlN.uf3',
-            'uf3_elements': 'Al N',
             'box_relax_settings': 'fix 1 all box/relax iso 0.0 vmax 0.001',
             'min_style': 'cg',
             'etol': '1e-25',
@@ -40,6 +38,7 @@ class BaseRelaxationSimulation(BaseSimulation):
         self._read_lattice_constants()
         self._read_total_energy()
         self._read_num_atoms()
+        self._read_relaxed_structure()
         return self.result
         
     def _read_lattice_constants(self):
@@ -81,3 +80,13 @@ class BaseRelaxationSimulation(BaseSimulation):
         match = self.read_result_file(num_atoms_file_path, pattern)
         self.result['num_atoms'] = int(match.group(1)) if match else None
         return self.result['num_atoms']
+    
+    def _read_relaxed_structure(self):
+        relaxed_structure_path = os.path.join(self.simulation_directory, "data.relaxed")
+        if os.path.exists(relaxed_structure_path):
+            with open(relaxed_structure_path, 'r') as file:
+                lines = file.readlines()
+                self.result['relaxed_structure'] = lines
+        else:
+            self.result['relaxed_structure'] = None
+        return self.result['relaxed_structure']

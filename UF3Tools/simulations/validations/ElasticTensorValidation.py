@@ -19,13 +19,16 @@ class ElasticTensorValidation(PotentialValidation):
             run_scripts,
             use_dft=False
         )
+        print(f'parameters: {parameters}')
         self.default_kwargs = {
             "min_style": "cg",
             "uf3_elements": element_list
         }
         self.kwargs = self.default_kwargs
+        print(f'Kwargs: {self.kwargs}')
         if parameters is not None:
             self.kwargs.update(parameters)
+        print(f'Kwargs: {self.kwargs}')
         self.dft_data = {
             "elastic_tensor": None,
             "bulk_modulus_voigt": None,

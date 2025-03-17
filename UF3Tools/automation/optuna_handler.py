@@ -97,18 +97,14 @@ def worker_init_once(
     automater.consolidate_data()
     automater.split_data(train_test_split, settings['unique_indices'], settings['unique_indices']) # e.g. 99% train, 1% test
     downloader = StructureDownloader(MP_API_KEY)
-    all_materials = downloader.get_structure_list(settings['chemical_formula'])
-    filtered = [
-        m for m in all_materials 
-        if m.split(":")[0] in settings['testing_mp_structures']
-    ]
     automater.set_dft_validation_structures(settings['testing_mp_structures'])
     automater.set_lammps_validation_structures(settings['testing_mp_structures'])
-    automater.download_validation_structures()
+    
     print("init once data laoded")
     # Store in the global
     GLOBAL_AUTOMATER = automater
     os.chdir(trial_folder)
+    automater.download_validation_structures()
     return f"Data loaded on {worker_hostname}"
 
 def validate_potential_with_timeout(analyzer, potential_label, model_filename, element_list, rmse,validations_to_run, relative_order, timeout=600):
@@ -124,14 +120,17 @@ def validate_potential_with_timeout(analyzer, potential_label, model_filename, e
             return None
 # Define loss function with normalized errors
 def loss_function(avg_result, normalized_error, acceptable_errors, weights):
+    print("avg result: ", avg_result)
     # Extract relevant values
-    cohesive_energy = avg_result.get('cohesive_energy', 0)
-    bulk_modulus = avg_result.get('bulk_modulus_voigt', 0)
-    shear_modulus = (avg_result.get('shear_modulus_voigt', 0) + avg_result.get('shear_modulus_reuss', 0)) / 2
-    lattice_constants = (avg_result.get('a', 0) + avg_result.get('b', 0) + avg_result.get('c', 0)) / 3
+    cohesive_energy = avg_result.get('cohesive_energy', 0.0)
+    bulk_modulus = avg_result.get('bulk_modulus_voigt', 0.0)
+    shear_modulus = (avg_result.get('shear_modulus_voigt', 0.0) + avg_result.get('shear_modulus_reuss', 0.0)) / 2
+    lattice_constants = (avg_result.get('a', 0.0) + avg_result.get('b', 0.0) + avg_result.get('c', 0.0)) / 3
     
-    indep_elastic = avg_result.get('independent_elastic_constants', 0)
-    surface_energy = avg_result.get('surface_energy', 0)
+    indep_elastic = avg_result.get('independent_elastic_constants', 0.0)
+    surface_energy = avg_result.get('surface_energy', 0.0)
+    phonopy_dos = avg_result.get('total_dos_rmse',0.0)
+    phonopy_band = avg_result.get('band_structure_rmse',0.0)
     
     
     # Normalize errors by acceptable thresholds
@@ -142,6 +141,8 @@ def loss_function(avg_result, normalized_error, acceptable_errors, weights):
     norm_error = abs(normalized_error) / acceptable_errors['normalized_error']
     norm_surface_energy = abs(surface_energy) / acceptable_errors['surface_energy']
     norm_indep_elastic = abs(indep_elastic) / acceptable_errors['elastic_tensor']
+    norm_phonopy_dos = abs(phonopy_dos) / acceptable_errors['phonopy_dos']
+    norm_phonopy_band = abs(phonopy_band) / acceptable_errors['phonopy_band']
     
     # Weights (adjustable for importance)
     weight_cohesive = weights['cohesive']
@@ -151,6 +152,8 @@ def loss_function(avg_result, normalized_error, acceptable_errors, weights):
     weight_lattice = weights['lattice']
     weight_error = weights['error']
     weight_surface_energy = weights['surface_energy']
+    weight_phonopy_dos = weights['phonopy_dos']
+    weight_phonopy_band = weights['phonopy_band']
     
     # Calculate loss with normalized errors
     loss = (
@@ -160,7 +163,9 @@ def loss_function(avg_result, normalized_error, acceptable_errors, weights):
         weight_shear * norm_shear +
         weight_lattice * norm_lattice +
         weight_error * norm_error +
-        weight_surface_energy * norm_surface_energy
+        weight_surface_energy * norm_surface_energy +
+        weight_phonopy_dos * norm_phonopy_dos +
+        weight_phonopy_band * norm_phonopy_band
     )
     return loss
 def parse_validation_data(validation_data, normalized_error, acceptable_errors, weights):
@@ -372,8 +377,6 @@ def objective(trial, client, settings):
     else:
         print("weird else case: ", result)
         return None
-        error, validation_data, normalized_error = None, result  # Assume result is the validation_data
-        print("the weirde else case")
 
 
     if validation_data is None:

@@ -5,7 +5,11 @@ import numpy as np
 from pymatgen.io.vasp import Poscar, Outcar
 from pymatgen.core import Structure
 from pymatgen.core import Element
-
+from phonopy.phonon.band_structure import get_band_qpoints_and_path_connections
+from phonopy import Phonopy
+from phonopy.interface.phonopy_yaml import PhonopyYaml
+import phonopy
+import yaml
 class DFTDataParser:
     def __init__(self, directory):
         """
@@ -214,3 +218,70 @@ class DFTDataParser:
             for i, site in enumerate(structure.sites, start=1):
                 atom_type = species_list.index(site.species_string) + 1
                 file.write(f"{i} {atom_type} {site.x:.6f} {site.y:.6f} {site.z:.6f}\n")
+    def get_phonopy_data(self, path):
+        """
+        Reads Phonopy output data and extracts:
+        - Band structure
+        - Total DOS
+        - Projected DOS
+        - Thermal properties
+
+        :param path: Directory where Phonopy output files are stored.
+        :return: Dictionary with phonon band structure, DOS, PDOS, and thermal properties.
+        """
+        data = {}
+
+        # Load Phonopy object from phonopy_disp.yaml
+        phonopy_yaml_file = os.path.join(path, "phonopy_disp.yaml")
+
+        if os.path.exists(phonopy_yaml_file):
+            phonon = phonopy.load(phonopy_yaml_file)  # Correct way to access phonopy object
+        else:
+            raise FileNotFoundError("Phonopy output files not found in the provided directory.")
+
+        # Read Band Structure
+        band_yaml_file = os.path.join(path, "band.yaml")
+        if os.path.exists(band_yaml_file):
+            with open(band_yaml_file, "r") as f:
+                band_data = yaml.safe_load(f)
+
+            qpoints = [entry["q-position"] for entry in band_data["phonon"]]
+            frequencies = [entry["band"] for entry in band_data["phonon"]]
+
+            data["band_structure"] = {
+                "qpoints": np.array(qpoints),
+                "frequencies": np.array([[band["frequency"] for band in bands] for bands in frequencies])
+            }
+
+        # Read Total DOS
+        total_dos_file = os.path.join(path, "total_dos.dat")
+        if os.path.exists(total_dos_file):
+            dos_data = np.loadtxt(total_dos_file)
+            data["total_dos"] = {
+                "frequency_points": dos_data[:, 0],
+                "total_dos": dos_data[:, 1]
+            }
+
+        # Read Projected DOS
+        projected_dos_file = os.path.join(path, "projected_dos.dat")
+        if os.path.exists(projected_dos_file):
+            pdos_data = np.loadtxt(projected_dos_file)
+            data["projected_dos"] = {
+                "frequency_points": pdos_data[:, 0],
+                "projected_dos": pdos_data[:, 1:]
+            }
+
+        # Read Thermal Properties
+        thermal_yaml_file = os.path.join(path, "thermal_properties.yaml")
+        if os.path.exists(thermal_yaml_file):
+            with open(thermal_yaml_file, "r") as f:
+                thermal_data = yaml.safe_load(f)
+
+            data["thermal_properties"] = {
+                "temperatures": np.array(thermal_data["temperature"]),
+                "free_energy": np.array(thermal_data["free_energy"]),
+                "entropy": np.array(thermal_data["entropy"]),
+                "heat_capacity": np.array(thermal_data["heat_capacity"])
+            }
+
+        return data

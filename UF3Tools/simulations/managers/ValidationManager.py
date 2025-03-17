@@ -6,6 +6,7 @@ from ..validations.ElasticTensorValidation import ElasticTensorValidation
 from ..validations.LangevinValidation import LangevinValidation
 from ..validations.LatticeConstantValidation import LatticeConstantValidation
 from ..validations.SurfaceEnergyValidation import SurfaceEnergyValidation
+from ..validations.PhonopyValidation import PhonopyValidation
 from ..validations.PotentialValidation import ValidationData
 from .LammpsSimulationFileManager import LammpsSimulationFileManager
 from ...common.LAMMPSModifier import LAMMPSModifier
@@ -15,7 +16,8 @@ class ValidationManager:
         "elastic_tensor": ElasticTensorValidation,
         "surface_energy": SurfaceEnergyValidation,
         "lattice_constant": LatticeConstantValidation,
-        "langevin": LangevinValidation
+        "langevin": LangevinValidation,
+        "phonopy": PhonopyValidation
     }
     
     template_file_lut = {
@@ -24,14 +26,16 @@ class ValidationManager:
         'ElasticTensor': "in.elastic",
         'SurfaceEnergy': "in.surface",
         'Langevin': "in.langevin",
-        'BaseRelaxation': "in.base_relax"
+        'BaseRelaxation': "in.base_relax",
+        'Phonopy': "in.phonopy",
     }
     
     dft_results_lut = {
         'lattice_constant': "dft/simulations/RelaxationSimulation/CONTCAR",
         'cohesive_energy': "dft/simulations/CohesiveEnergySimulation/results.txt",
         'elastic_tensor': "dft/simulations/ElasticTensorSimulation/results.txt",
-        'surface_energy': "dft/simulations/SurfaceEnergySimulation/"
+        'surface_energy': "dft/simulations/SurfaceEnergySimulation/",
+        'phonopy': "dft/simulations/PhonopySimulation/",
     }
 
     def __init__(self, potential_version, structure_id, potential_file, lammps_model_file, dft_model_file, element_list, validation_folder_path, validations_to_run, kwargs=None):
@@ -42,6 +46,9 @@ class ValidationManager:
         self.element_list = element_list
         self.validations_to_run = validations_to_run
         self.kwargs = kwargs
+        if self.kwargs is None:
+            self.kwargs = {}
+        self.kwargs.update({'uf3_elements': self.element_list})
         self.base_simulations_required = []
         self.base_results = {}
         self.base_simulation_objects = {}
@@ -54,6 +61,7 @@ class ValidationManager:
             'dft': os.path.join(self.basic_files_directory, "start_simulation_dft.sh")
         }
         self.validation_data = ValidationData(potential_version, potential_file, structure_id)
+        print(f' validation data element list: {self.element_list}')
 
     def get_validation_data(self):
         return self.validation_data

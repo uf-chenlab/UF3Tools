@@ -62,6 +62,7 @@ class ModelAutomater:
             'composition_range': 'filter_composition_range',
             'max_epa': 'filter_max_epa',
             'min_epa': 'filter_min_epa',
+            'unreasonable_epas': 'filter_unreasonable_epas',
             'gas': 'filter_gas',
             'none': 'get_data'
             # Add new filters here as needed
@@ -459,7 +460,62 @@ class ModelAutomater:
         
         # Reload the filtered data
         self.load_filtered_data()
-        
+    def filter_all_data(self, filter_type, check_existing=True, *args):
+        """
+        Similar to generate_new_filtered_data, but applies the same filter to
+        *every* data file we have (i.e., all items in self.base_data_frames).
+
+        Parameters:
+        - filter_type: The filter you'd like to apply (e.g. 'composition', 'energy_above_hull')
+        - check_existing: If True, will skip re-filtering if a filtered file already exists.
+        - args: Arguments to pass to the filter method.
+        """
+        # Loop through all data files in self.base_data_frames
+        for data_filename, data in self.base_data_frames.items():
+            # The data type is usually the filename without '.pkl'
+            data_type = data_filename.replace('.pkl', '')
+
+            # Skip if on the ignore list
+            if data_type in self.data_ignore_list:
+                continue
+
+            filtered_filename = f'{data_type}_filtered.pkl'
+            filtered_file_path = os.path.join(self.filter_directory, filtered_filename)
+
+            # If we are told to check existing, see if we already have a filtered file
+            if check_existing and filtered_filename in self.filtered_data_frames:
+                # We already have filtered data for this data type; just skip
+                continue
+
+            # Otherwise, we follow the same logic as generate_new_filtered_data
+            # Optionally, you can do checks for columns or "repair" data, etc.
+            print(f"Filtering {data_type} data with {filter_type} filter.")
+            print(f"Current data length: {len(data)}")
+
+            # Create a DataFilter instance
+            data_filter = DataFilter(data)
+
+            # Find the appropriate filter method
+            filter_method_name = self.FILTER_FUNCTION_LUT.get(filter_type)
+            if not filter_method_name:
+                print(f"Unsupported filter type: {filter_type}")
+                continue
+
+            filter_method = getattr(data_filter, filter_method_name, None)
+            if not filter_method:
+                print(f"Filter method {filter_method_name} not found in DataFilter.")
+                continue
+
+            # Apply the filter
+            filter_method(*args)
+
+            # Export the filtered data
+            data_filter.export_to_pickle(filtered_file_path)
+            print(f"Filtered data length: {len(data_filter.get_data())}")
+
+            # Reload the filtered data so self.filtered_data_frames is up to date
+            self.load_filtered_data()
+   
     def copy_unfiltered_data(self):
         """
         Copy unfiltered data to the filtered directory, excluding data types in data_ignore_list.
@@ -660,9 +716,9 @@ class ModelAutomater:
         trainer.set_training_set(training_data)
         trainer.set_testing_set(testing_data)
         if(len(features) == 1):
-            trainer.train_model_parallel(features[0], weight, batch_size, num_cores, sample_weights=sample_weights_final if sample_weights is not None else None)
+            trainer.train_model_parallel(features[0], weight=weight, batch_size=batch_size, num_cores=num_cores, sample_weights=sample_weights_final if sample_weights is not None else None)
         else:
-            trainer.train_model_multiple_files_parallel(features, weight, batch_size, num_cores,sample_weights=sample_weights_final if sample_weights is not None else None)
+            trainer.train_model_multiple_files_parallel(features, weight=weight, batch_size=batch_size, num_cores=num_cores,sample_weights=sample_weights_final if sample_weights is not None else None)
         trainer.export_model(model_filename)
         #analyzer = ModelAnalyzer(self.chemical_system, trainer.get_model(), trainer.get_bspline_config(), training_data, structure, structure_feature)
         return self.chemical_system, trainer.get_model(), trainer.get_bspline_config(), features, model_filename

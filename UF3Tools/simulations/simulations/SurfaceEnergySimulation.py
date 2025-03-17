@@ -15,8 +15,6 @@ class SurfaceEnergySimulation(CompleteLammpsSimulation):
             "change_box": "",
             "box_relax_settings": "",
             "uf3_degree": "3",
-            "uf3_file": "AlN.uf3",
-            "uf3_elements": "Al N",
             "min_style": "cg",
             "etol": "1e-25",
             "ftol": "1e-25",

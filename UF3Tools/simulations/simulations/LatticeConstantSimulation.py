@@ -16,8 +16,6 @@ class LatticeConstantSimulation(CompoundSimulation):
             "z_boundary": "p",
             "change_box": "",
             "uf3_degree": "3",
-            "uf3_file": "AlN.uf3",
-            "uf3_elements": "Al N",
             "box_relax_settings": "fix 1 all box/relax iso 0.0 vmax 0.001",
             "min_style": "cg",
             "etol": "1e-25",

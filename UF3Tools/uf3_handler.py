@@ -130,7 +130,7 @@ class DataParser:
                     if root in visited_directories:
                         continue
                     visited_directories.add(root)
-                    
+                    print(f"Parsing directory: {root}")
                     # Split the directory path and concatenate the relevant parent directories
                     relative_path = os.path.relpath(root, directory)
                     path_parts = relative_path.split(os.sep)
@@ -151,16 +151,16 @@ class DataParser:
                                 print(f"Using default index naming: {os.path.basename(file)}")
                                 # Default to use the entire file name if it doesn't match the expected pattern
                                 prefix = f'ind_{root}_{folder_name}_run_{os.path.basename(file)}'
-                            
+                            if len(prefix) > 200:
+                                excess_length = len(prefix) - 200
+                                prefix = prefix[excess_length:]  # Trim from the front
                             # Use the data_coordinator to parse the file and update the data.
                             # if prefix contains anything from the data type list, turn off the filter
-                            if filter:
-                                for data_type in DataSetAnalyzer.DATA_TYPE_PREFIXES.values():
-                                    if data_type.lower() in prefix.lower():
-                                        filter = False
-                                        break
                             print("debug data prefix: ", prefix)
-                            self.data_coordinator.dataframe_from_trajectory(file, prefix=prefix, filter=filter)
+                            try:
+                                self.data_coordinator.dataframe_from_trajectory(file, prefix=prefix, filter=filter)
+                            except Exception as e:
+                                print(f"Error parsing file {file}: {e}")
                             parsedFiles += 1
                         except Exception as e:
                             print(f"Error processing {file}: {e}")
@@ -235,12 +235,17 @@ class DataParser:
         self.data.to_pickle(filename)
     
     def load_from_pickle(self, filename):
-        """
-        Load the DataFrame from a pickle file.
-
-        :param filename: Name of the pickle file.
-        """
         self.data = pd.read_pickle(filename)
+        #make sure it actually has any data in it
+        if self.data.empty:
+            raise ValueError(f"Pickle file {filename} is empty.")
+        # Checking if 'energy_per_atom' is missing
+        if 'energy_per_atom' not in self.data.columns:
+            sp = StructureParser(self.data)
+            sp.append_energy_per_atom()
+            self.data = sp.get_data()
+            # Updating the pickle with the newly calculated column
+            self.export_to_pickle(filename)
     def get_data(self):
         
         """
@@ -859,6 +864,30 @@ class DataFilter:
         :param filename: Name of the pickle file.
         """
         self.data.to_pickle(filename)
+    def filter_unreasonable_epas(self):
+        # Drop anything with a positive EPA (assuming negative EPAs are physically valid)
+        negative_df = self.data[self.data['energy_per_atom'] <= 1]
+        
+        # Compute Q1, Q3, and IQR on the negative subset
+        q1 = negative_df['energy_per_atom'].quantile(0.25)
+        q3 = negative_df['energy_per_atom'].quantile(0.75)
+        iqr = q3 - q1
+        
+        # Define lower and upper bounds
+        lower_fence = q1 - 2.0 * iqr
+        upper_fence = q3 + 2.0 * iqr
+        
+        # Keep only the points within these bounds
+        filtered_df = negative_df[
+            (negative_df['energy_per_atom'] >= lower_fence) & 
+            (negative_df['energy_per_atom'] <= upper_fence)
+        ]
+        
+        # Optionally report how many rows were removed
+        removed_count = len(self.data) - len(filtered_df)
+        print(f"Removed {removed_count} outlier rows based on IQR filtering of energy_per_atom.")
+        
+        self.data = filtered_df
         
 
 class Featurizer:
@@ -1132,23 +1161,23 @@ class ModelTrainer:
         :param testing_set: DataFrame containing the testing set.
         """
         self.testing_set = testing_set
-    def train_model(self, filename, weight=0.3, batch_size=2500, sample_weights=None):
+    def train_model(self, filename, weight=0.3, batch_size=500, sample_weights=None):
         """
         Train the model.
         """
         self.model.fit_from_file(filename, self.train_keys, weight=weight, batch_size=batch_size, energy_key="energy", progress='bar',sample_weights=sample_weights)
-    def train_model_parallel(self, filename, weight=0.3, batch_size=2500,num_cores=1,callback=None, position=0, sample_weights=None):
+    def train_model_parallel(self, filename, weight=0.3, batch_size=500,num_cores=1,callback=None, position=0, sample_weights=None):
         """
         Train the model.
         """
         print("training parallel model with cores: ", num_cores)
         self.model.fit_from_file_parallel(filename, self.train_keys, weight=weight, batch_size=batch_size, energy_key="energy", num_cores=num_cores, progress='bar', sample_weights=sample_weights)
-    def train_model_multiple_files(self, filenames, weight=0.3, batch_size=2500, sample_weights=None):
+    def train_model_multiple_files(self, filenames, weight=0.3, batch_size=500, sample_weights=None):
         """
         Train the model using multiple files.
         """
         self.model.fit_from_files(filenames, self.train_keys, weight=weight, batch_size=batch_size, energy_key='energy', progress='bar',sample_weights=sample_weights)
-    def train_model_multiple_files_parallel(self, filenames, weight=0.3, batch_size=2500, num_cores=1,callback=None,position=0, sample_weights=None):
+    def train_model_multiple_files_parallel(self, filenames, weight=0.3, batch_size=500, num_cores=1,callback=None,position=0, sample_weights=None):
         """
         Train the model using multiple files.
         """
@@ -1737,6 +1766,7 @@ class ModelAnalyzer:
                                 e.g., {"lattice_constant": True, "cohesive_energy": False, ...}
         """
         print("validate potential entry1")
+        print('validate potential element list:', element_list)
         current_directory = os.getcwd()
         datas = []
         if validations_to_run is None:
