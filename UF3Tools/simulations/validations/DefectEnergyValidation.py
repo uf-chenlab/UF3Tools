@@ -89,12 +89,6 @@ class DefectEnergyValidation(PotentialValidation):
             self.lammps_data[defect_type] = defect_simulation.run(overwrite=overwrite, local=local)
             print('ran simulation')
             
-        for defect_type, defect_data in self.lammps_data.items():
-            if(defect_data is None):
-                print(f'No data for defect type: {defect_type}')
-                continue
-            cohesive = defect_data['cohesive_energy']
-            print(f'Defect Type: {defect_type} = {cohesive}')
         output_dict = {}
         output_dict['dft'] = self.dft_data
         output_dict['lammps'] = self.lammps_data
