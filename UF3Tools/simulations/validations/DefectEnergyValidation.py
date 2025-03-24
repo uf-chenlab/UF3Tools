@@ -95,24 +95,9 @@ class DefectEnergyValidation(PotentialValidation):
                 continue
             cohesive = defect_data['cohesive_energy']
             print(f'Defect Type: {defect_type} = {cohesive}')
-        return {"cohesive_energy": None}
-            
-            
-        
-
-        if self.lammps_results and ((self.use_dft and self.dft_data) or self.has_dft_data):
-            if self.has_dft_data:
-                if isinstance(self.lammps_results, list):
-                    self.lammps_results = self.lammps_results[0]
-
-                lammps_cohesive_energy = self.lammps_results["cohesive_energy"]
-                percent_error = {}
-                percent_error["cohesive_energy"] = abs(
-                    (lammps_cohesive_energy - self.dft_data["cohesive_energy"])
-                    / self.dft_data["cohesive_energy"]
-                ) * 100
-                return percent_error
-
-        return {"cohesive_energy": None}
+        output_dict = {}
+        output_dict['dft'] = self.dft_data
+        output_dict['lammps'] = self.lammps_data
+        return output_dict
 
     
