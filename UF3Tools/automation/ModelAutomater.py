@@ -48,7 +48,7 @@ class CoreManager:
 
 
 class ModelAutomater:
-    def __init__(self, directories, run_data_path, feature_filename, element_list, degree, chemical_system, maps, num_cores):
+    def __init__(self, directories, run_data_path, feature_filename, element_list, degree, chemical_system, maps, validation_folder=None, num_cores=1):
          # Class-wide LUT for filter types to corresponding methods
         self.FILTER_FUNCTION_LUT = {
             'composition': 'filter_composition',
@@ -71,6 +71,7 @@ class ModelAutomater:
         self.directories = directories
         self.run_data_path = run_data_path
         self.feature_filename = feature_filename
+        self.validation_folder = validation_folder
         self.element_list = element_list
         self.degree = degree
         self.chemical_system = chemical_system
@@ -111,20 +112,28 @@ class ModelAutomater:
         self.parity_feature = None
         self.dft_validation_structures = None
         self.lammps_validation_structures = None
+        self.single_crystal_validation_structures = None
     def set_dft_validation_structures(self, validation_structures):
         self.dft_validation_structures = validation_structures
     def get_dft_validation_structures(self):
         return self.dft_validation_structures
     def set_lammps_validation_structures(self, validation_structures):
         self.lammps_validation_structures = validation_structures
-    def download_validation_structures(self):
-        if self.dft_validation_structures:
-            for structure in self.dft_validation_structures:
+    def set_single_crystal_validation_structures(self, validation_structures):
+        self.single_crystal_validation_structures = validation_structures
+    def get_single_crystal_validation_structures(self):
+        return self.single_crystal_validation_structures
+    def download_structures(self, structures):
+        if structures:
+            for structure in structures:
                 print("downloading structure: ", structure)
                 mpid = structure
                 directory = os.path.join("validation/structures/", structure)
                 print("directory: ", directory)
                 self.structure_downloader.download_single_structure(mpid, directory)
+    def download_validation_structures(self):
+        if self.dft_validation_structures:
+            self.download_structures(self.dft_validation_structures)
     def get_lammps_validation_structures(self):
         return self.lammps_validation_structures
     def get_chemical_system(self):
@@ -152,13 +161,7 @@ class ModelAutomater:
             os.path.join(base_path, "generation"),
             
             os.path.join(base_path, "validation"),
-            os.path.join(base_path, "validation", "dft"),
-            os.path.join(base_path, "validation", "dft", "basic_files"),
-            os.path.join(base_path, "validation", "dft", "simulations"),
-            os.path.join(base_path, "validation", "dft", "simulations", "ElasticTensor"),
-            os.path.join(base_path, "validation", "dft", "simulations", "RelaxationSimulation"),
-            os.path.join(base_path, "validation", "dft", "simulations", "SurfaceEnergySimulation"),
-            os.path.join(base_path, "validation", "dft", "templates"),
+            
             
             os.path.join(base_path, "validation", "lammps"),
             os.path.join(base_path, "validation", "lammps", "basic_files"),
@@ -172,6 +175,17 @@ class ModelAutomater:
             # no sub-directories inside structures.
             os.path.join(base_path, "validation", "structures")
         ]
+        dft_directories = [
+            os.path.join(base_path, "validation", "dft"),
+            os.path.join(base_path, "validation", "dft", "basic_files"),
+            os.path.join(base_path, "validation", "dft", "simulations"),
+            os.path.join(base_path, "validation", "dft", "simulations", "ElasticTensor"),
+            os.path.join(base_path, "validation", "dft", "simulations", "RelaxationSimulation"),
+            os.path.join(base_path, "validation", "dft", "simulations", "SurfaceEnergySimulation"),
+            os.path.join(base_path, "validation", "dft", "templates"),
+        ]
+        if self.validation_folder is not None:
+            directories.append(dft_directories)
     
         # Create each directory if it doesn't exist
         for directory in directories:

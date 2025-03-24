@@ -122,7 +122,14 @@ class BaseSimulation(CompleteLammpsSimulation):
                  extra_files=[], simulation_type=None, parameters=None):
         
         super().__init__(simulation_name, input_file, model_file, potential_file, simulation_root_directory, run_script, extra_files, simulation_type, parameters=parameters)
-    
+
+class BaseSingleCrystalSimulation(BaseSimulation):
+    def __init__(self, simulation_name, input_file, model_file, potential_file, 
+                 simulation_root_directory=os.getcwd(), run_script="start_simulation.sh", 
+                 extra_files=[], simulation_type=None, parameters=None):
+        super().__init__(simulation_name, input_file, model_file, potential_file, simulation_root_directory, run_script, extra_files, simulation_type, parameters=parameters)
+
+
 class CompoundSimulation(CompleteLammpsSimulation):
     required_sub_simulations = []
     @classmethod

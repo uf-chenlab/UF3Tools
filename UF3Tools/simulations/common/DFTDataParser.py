@@ -285,3 +285,45 @@ class DFTDataParser:
             }
 
         return data
+    
+    def get_defect_energy(self, path):
+        """
+        Parses all defect directories, extracts energy per atom, and stores the defect structure.
+        :return: Dictionary with defect types as keys, and (energy per atom, POSCAR structure) as values.
+        """
+        defect_data = {}
+        path = os.path.abspath(path)
+        print("get defect energy")
+
+        for defect_dir in os.listdir(path):
+            defect_path = os.path.join(path, defect_dir)
+            print("defect path: ", defect_path)
+
+            if not os.path.isdir(defect_path):
+                continue  # Skip non-directory files
+
+            defect_type = defect_dir  # Using the folder name as the defect type
+            outcar_path = os.path.join(defect_path, "OUTCAR")
+            poscar_path = os.path.join(defect_path, "POSCAR")
+            
+
+            if not os.path.exists(outcar_path) or not os.path.exists(poscar_path):
+                print(f"Skipping {defect_dir}: Missing OUTCAR or POSCAR")
+                continue
+            print("outcar path: ", outcar_path)
+            try:
+                pattern = r'energy\s*=\s*([-.\d]+)'
+                total_energy = self.read_result_file(os.path.join(defect_path, "results.txt"), pattern)
+                total_energy = float(total_energy.group(1))
+                structure = Poscar.from_file(poscar_path).structure
+                num_atoms = len(structure.sites)
+                print(f'total energy: {total_energy}')
+                print(f'num atoms: {num_atoms}')
+                energy_per_atom = total_energy / num_atoms
+
+                defect_data[defect_type] = (energy_per_atom, structure)
+            except Exception as e:
+                print(f"Error processing {defect_dir}: {e}")
+                continue
+
+        return defect_data

@@ -88,7 +88,6 @@ def worker_init_once(
     print("init once automater")
 
     automater.set_ignore_list(ignore_list)
-    
 
     # Potentially big data loads happen here
     automater.load_existing_base_data()
@@ -96,7 +95,6 @@ def worker_init_once(
     automater.load_filtered_data()
     automater.consolidate_data()
     automater.split_data(train_test_split, settings['unique_indices'], settings['unique_indices']) # e.g. 99% train, 1% test
-    downloader = StructureDownloader(MP_API_KEY)
     automater.set_dft_validation_structures(settings['testing_mp_structures'])
     automater.set_lammps_validation_structures(settings['testing_mp_structures'])
     
@@ -105,6 +103,14 @@ def worker_init_once(
     GLOBAL_AUTOMATER = automater
     os.chdir(trial_folder)
     automater.download_validation_structures()
+    
+    if 'formation_energy' in settings['validations_to_run']:
+        if 'formation_energy_structures' in settings:
+            automater.download_structures(settings['formation_energy_structures'])
+            automater.set_single_crystal_validation_structures(settings['formation_energy_structures'])
+        else:
+            raise ValueError("formation_energy_structures not provided in settings")
+    
     return f"Data loaded on {worker_hostname}"
 
 def validate_potential_with_timeout(analyzer, potential_label, model_filename, element_list, rmse,validations_to_run, relative_order, timeout=600):
@@ -131,30 +137,38 @@ def loss_function(avg_result, normalized_error, acceptable_errors, weights):
     surface_energy = avg_result.get('surface_energy', 0.0)
     phonopy_dos = avg_result.get('total_dos_rmse',0.0)
     phonopy_band = avg_result.get('band_structure_rmse',0.0)
+    phonopy_fe = avg_result.get('free_energy', 0.0)
+    phonopy_entropy = avg_result.get('entropy', 0.0)
+    phonopy_heat_capacity = avg_result.get('heat_capacity', 0.0)
     
     
     # Normalize errors by acceptable thresholds
-    norm_cohesive = abs(cohesive_energy) / acceptable_errors['cohesive_energy']
-    norm_bulk = abs(bulk_modulus) / acceptable_errors['bulk_modulus']
-    norm_shear = abs(shear_modulus) / acceptable_errors['shear_modulus']
-    norm_lattice = abs(lattice_constants) / acceptable_errors['lattice_constants']
-    norm_error = abs(normalized_error) / acceptable_errors['normalized_error']
-    norm_surface_energy = abs(surface_energy) / acceptable_errors['surface_energy']
-    norm_indep_elastic = abs(indep_elastic) / acceptable_errors['elastic_tensor']
-    norm_phonopy_dos = abs(phonopy_dos) / acceptable_errors['phonopy_dos']
-    norm_phonopy_band = abs(phonopy_band) / acceptable_errors['phonopy_band']
+    norm_cohesive = abs(cohesive_energy) / acceptable_errors.get('cohesive_energy', 1.0)
+    norm_bulk = abs(bulk_modulus) / acceptable_errors.get('bulk_modulus', 1.0)
+    norm_shear = abs(shear_modulus) / acceptable_errors.get('shear_modulus', 1.0)
+    norm_lattice = abs(lattice_constants) / acceptable_errors.get('lattice_constants', 1.0)
+    norm_error = abs(normalized_error) / acceptable_errors.get('normalized_error', 1.0)
+    norm_surface_energy = abs(surface_energy) / acceptable_errors.get('surface_energy', 1.0)
+    norm_indep_elastic = abs(indep_elastic) / acceptable_errors.get('elastic_tensor', 1.0)
+    norm_phonopy_dos = abs(phonopy_dos) / acceptable_errors.get('phonopy_dos', 1.0)
+    norm_phonopy_band = abs(phonopy_band) / acceptable_errors.get('phonopy_band', 1.0)
+    norm_phonopy_fe = abs(phonopy_fe) / acceptable_errors.get('phonopy_free_energy', 1.0)
+    norm_phonopy_entropy = abs(phonopy_entropy) / acceptable_errors.get('phonopy_entropy', 1.0)
+    norm_phonopy_heat_capacity = abs(phonopy_heat_capacity) / acceptable_errors.get('phonopy_heat_capacity', 1.0)
     
     # Weights (adjustable for importance)
-    weight_cohesive = weights['cohesive']
-    weight_elastic = weights['elastic']
-    weight_bulk = weights['bulk']
-    weight_shear = weights['shear']
-    weight_lattice = weights['lattice']
-    weight_error = weights['error']
-    weight_surface_energy = weights['surface_energy']
-    weight_phonopy_dos = weights['phonopy_dos']
-    weight_phonopy_band = weights['phonopy_band']
-    
+    weight_cohesive = weights.get('cohesive_energy', 0.0)
+    weight_elastic = weights.get('elastic', 0.0)
+    weight_bulk = weights.get('bulk', 0.0)
+    weight_shear = weights.get('shear', 0.0)
+    weight_lattice = weights.get('lattice', 0.0)
+    weight_error = weights.get('error', 0.0)
+    weight_surface_energy = weights.get('surface_energy', 0.0)
+    weight_phonopy_dos = weights.get('phonopy_dos', 0.0)
+    weight_phonopy_band = weights.get('phonopy_band', 0.0)
+    weight_phonopy_fe = weights.get('phonopy_free_energy', 0.0)
+    weight_phonopy_entropy = weights.get('phonopy_entropy', 0.0)
+    weight_phonopy_heat_capacity = weights.get('phonopy_heat_capacity', 0.0)
     # Calculate loss with normalized errors
     loss = (
         weight_cohesive * norm_cohesive +
@@ -165,7 +179,10 @@ def loss_function(avg_result, normalized_error, acceptable_errors, weights):
         weight_error * norm_error +
         weight_surface_energy * norm_surface_energy +
         weight_phonopy_dos * norm_phonopy_dos +
-        weight_phonopy_band * norm_phonopy_band
+        weight_phonopy_band * norm_phonopy_band + 
+        weight_phonopy_fe * norm_phonopy_fe +
+        weight_phonopy_entropy * norm_phonopy_entropy +
+        weight_phonopy_heat_capacity * norm_phonopy_heat_capacity
     )
     return loss
 def parse_validation_data(validation_data, normalized_error, acceptable_errors, weights):
@@ -282,12 +299,14 @@ def train_with_preloaded_data(params, settings, trial_id=0):
         bspline_config, 
         automater.get_training_set(),
         automater.get_testing_set(),
-        features
+        features,
+        dft_validation_folder = settings.get('dft_validation_folder', None),
     )
 
     
     analyzer.set_dft_validation_structures(automater.get_dft_validation_structures())
     analyzer.set_lammps_validation_structures(automater.get_lammps_validation_structures())
+    analyzer.set_single_crystal_validation_structures(automater.get_single_crystal_validation_structures())
     analyzer.set_up_folder_structure()
     if 'al' in settings['chemical_formula'].lower():
         analyzer.fix_repulsion_2b(pair=('Al', 'Al'), r_target=0.25, min_curvature=50.0)

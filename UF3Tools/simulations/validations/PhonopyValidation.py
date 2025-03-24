@@ -8,6 +8,10 @@ class PhonopyValidation(PotentialValidation):
     @classmethod
     def get_required_base_simulations(cls):
         return PhonopySimulation.get_required_sub_simulations()
+    
+    @classmethod 
+    def get_required_single_crystal_simulations(cls):
+        return PhonopySimulation.get_required_sub_simulations()
     computational_weight=2
     required_supercell = (1,1,1)
     def __init__(self, potential_file, lammps_model_file, dft_model_file, element_list, validation_folder_path, run_scripts, template_directory, parameters=None):
@@ -32,15 +36,6 @@ class PhonopyValidation(PotentialValidation):
         if parameters is not None:
             self.kwargs.update(parameters)
         print(f'Kwargs: {self.kwargs}')
-        self.dft_data = {
-            "elastic_tensor": None,
-            "bulk_modulus_voigt": None,
-            "bulk_modulus_reuss": None,
-            "bulk_modulus_hill": None,
-            "shear_modulus_voigt": None,
-            "shear_modulus_reuss": None,
-            "shear_modulus_hill": None,
-        }
         self.lammps_data = dict(self.dft_data)
         self.use_dft = False
 
@@ -145,18 +140,18 @@ class PhonopyValidation(PotentialValidation):
         comparison_results["total_dos_rmse"] = dos_rmse * 100
 
         # # Compare Thermal Properties
-        # thermal_keys = ["free_energy", "entropy", "heat_capacity"]
-        # print(f'dft data: {self.dft_data}')
-        # for key in thermal_keys:
-        #     dft_values = np.array(self.dft_data["thermal_properties"][key])
-        #     lammps_values = np.array(self.lammps_data["thermal_properties"][key])
+        thermal_keys = ["free_energy", "entropy", "heat_capacity"]
+        print(f'dft data: {self.dft_data}')
+        for key in thermal_keys:
+            dft_values = np.array(self.dft_data["thermal_properties"][key])
+            lammps_values = np.array(self.lammps_data["thermal_properties"][key])
 
-        #     if dft_values.shape == lammps_values.shape and np.all(dft_values != 0):
-        #         percent_error = np.mean(np.abs((dft_values - lammps_values) / dft_values) * 100)
-        #     else:
-        #         percent_error = None  # Mismatch or division by zero
+            if dft_values.shape == lammps_values.shape and np.all(dft_values != 0):
+                percent_error = np.mean(np.abs((dft_values - lammps_values) / dft_values) * 100)
+            else:
+                percent_error = None  # Mismatch or division by zero
 
-        #     comparison_results[f"{key}_percent_error"] = percent_error
+            comparison_results[f"{key}_percent_error"] = percent_error
 
         return comparison_results
 

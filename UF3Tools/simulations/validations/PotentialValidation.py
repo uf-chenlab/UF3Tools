@@ -9,6 +9,7 @@ import ast
 class PotentialValidation:
     computational_weight = 0
     required_base_simulations = []
+    required_single_crystal_simulations = []
     simulation = None
     required_supercell = (1, 1, 1)
 
@@ -19,6 +20,10 @@ class PotentialValidation:
     @classmethod
     def get_required_base_simulations(cls):
         return cls.required_base_simulations
+    
+    @classmethod
+    def get_required_single_crystal_simulations(cls):
+        return cls.required_single_crystal_simulations
 
     @classmethod
     def get_required_supercell(cls):

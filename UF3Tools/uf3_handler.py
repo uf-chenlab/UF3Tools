@@ -1,7 +1,7 @@
 import glob
 import os
 import pandas as pd
-from UF3Tools.simulations.managers.ValidationManager import ValidationManager
+from UF3Tools.simulations.managers.ValidationManager import ValidationManager, SingleCrystalValidationManager
 import numpy as np
 import matplotlib.pyplot as plt
 from uf3.data import io
@@ -1403,7 +1403,7 @@ class ModelTrainerMultipleSteps:
         """
         return self.model        
 class ModelAnalyzer:
-    def __init__(self, chemical_system, model, bspline_config, training_data, testing_data, feature_filenames, r_cut = 10, bins = 0.01):
+    def __init__(self, chemical_system, model, bspline_config, training_data, testing_data, feature_filenames, dft_validation_folder = None, r_cut = 10, bins = 0.01):
         """
         Initialize the ModelAnalyzer with a chemical system, model, and data.
 
@@ -1418,8 +1418,10 @@ class ModelAnalyzer:
         self.testing_data = testing_data
         self.testing_keys = testing_data.index
         self.feature_filenames = feature_filenames
+        self.dft_validation_folder = dft_validation_folder
         self.dft_validation_structures = []
         self.lammps_validation_structures = []
+        self.single_crystal_validation_structures = []
         self.r_cut = r_cut
         self.bins = bins
         self.bspline_config = bspline_config
@@ -1437,6 +1439,13 @@ class ModelAnalyzer:
         :param lammps_validation_structures: List of LAMMPS validation structures.
         """
         self.lammps_validation_structures = lammps_validation_structures
+    def set_single_crystal_validation_structures(self, single_crystal_validation_structures):
+        """
+        Set the single crystal validation structures.
+
+        :param single_crystal_validation_structures: List of single crystal validation structures.
+        """
+        self.single_crystal_validation_structures = single_crystal_validation_structures
     def analyze_model(self, data_coordinator, r_cut = 10.0, bins = 0.01, training = False):
         """
         Analyze the model.
@@ -1776,13 +1785,20 @@ class ModelAnalyzer:
                 "elastic_tensor": True,
                 "surface_energy": True
             }
-        def process_structure(structure):
+            
+            
+        def process_structure(structure, single_crystal_data=None):
             if "POSCAR" in structure or "LAMMPS" in structure:
                 print(f"Skipping structure containing POSCAR or LAMMPS: {structure}")
                 return None
 
             structure_id = structure.replace("mp-", "")
+            
             validation_folder_path = os.path.join(current_directory, "validation/structures", structure)
+            if self.dft_validation_structures:
+                dft_validation_folder = os.path.join(self.dft_validation_folder, structure)
+            else:
+                dft_validation_folder = validation_folder_path
             lammps_file = os.path.join(validation_folder_path, f"LAMMPS_{structure_id}.data")
             dft_file = os.path.join(validation_folder_path, f"POSCAR_{structure_id}")
 
@@ -1792,11 +1808,6 @@ class ModelAnalyzer:
 
             element_list_str = " ".join(element_list)
 
-            # Generate a supercell without touching global directories
-            modifier = LAMMPSModifier(lammps_file)
-            lammps_file_big = modifier.generate_supercell((4, 4, 4))
-
-            # Construct the ValidationManager without chdirs
             manager = ValidationManager(
                 potential_version,
                 structure_id,
@@ -1805,8 +1816,11 @@ class ModelAnalyzer:
                 dft_file,
                 element_list_str,
                 validation_folder_path,
+                dft_validation_folder,
                 validations_to_run
             )
+            if(single_crystal_data is not None):
+                manager.set_single_crystal_data(single_crystal_data)
 
             data = manager.run_validation()
             if rmse == True:
@@ -1816,10 +1830,38 @@ class ModelAnalyzer:
             data.set_normalized_error(normalized_error)
 
             return data
+        single_crystal_data = None
+        if 'formation_energy' in validations_to_run:
+            for structure in self.single_crystal_validation_structures:
+                structure_id = structure.replace("mp-", "")
+                validation_folder_path = os.path.join(current_directory, "validation/structures", structure)
+                lammps_file = os.path.join(validation_folder_path, f"LAMMPS_{structure_id}.data")
+                dft_file = os.path.join(validation_folder_path, f"POSCAR_{structure_id}")
+
+                if not os.path.isfile(lammps_file) or not os.path.isfile(dft_file):
+                    print(f"Files missing for structure {structure_id}: {lammps_file}, {dft_file}")
+                    return None
+
+                element_list_str = " ".join(element_list)
+                
+                manager = SingleCrystalValidationManager(
+                    potential_version,
+                    structure_id,
+                    potential_file,
+                    lammps_file,
+                    dft_file,
+                    element_list_str,
+                    validation_folder_path,
+                    validations_to_run
+                )
+
+                single_crystal_data = manager.run_validation()
+                print("Single crystal validation data:", single_crystal_data)
+
 
         with ThreadPoolExecutor(max_workers=4) as executor:
             future_to_structure = {
-                executor.submit(process_structure, s): s for s in self.dft_validation_structures
+                executor.submit(process_structure, s, single_crystal_data): s for s in self.dft_validation_structures
             }
             for future in as_completed(future_to_structure):
                 result = future.result()
