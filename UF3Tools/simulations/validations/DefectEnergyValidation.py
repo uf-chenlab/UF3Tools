@@ -29,12 +29,8 @@ class DefectEnergyValidation(PotentialValidation):
         self.kwargs = self.default_kwargs
         if parameters is not None:
             self.kwargs.update(parameters)
-        self.dft_data = {"cohesive_energy": None}
-        self.lammps_data = {
-            "bulk_energy": None,
-            "num_atoms": None,
-            "cohesive_energy": None
-        }
+        self.dft_data = {}
+        self.lammps_data = {}
         self.use_dft = False
 
         self.sim_template_file = os.path.join(
@@ -90,8 +86,23 @@ class DefectEnergyValidation(PotentialValidation):
             print('ran simulation')
             
         output_dict = {}
-        output_dict['dft'] = self.dft_data
-        output_dict['lammps'] = self.lammps_data
+        dft_dict = {}
+        lammps_dict = {}
+        #put only the dft energies in the dft output
+        for defect_type, defect_data in self.dft_data.items():
+            epa, structure = defect_data
+            dft_dict[defect_type] = {
+                "cohesive_energy": epa
+            }
+        output_dict['dft'] = dft_dict
+        for defect_type, defect_data in self.lammps_data.items():
+            if defect_data is None:
+                continue
+            cohesive_energy = defect_data['cohesive_energy']
+            lammps_dict[defect_type] = {
+                "cohesive_energy": cohesive_energy
+            }
+        output_dict['lammps'] = lammps_dict
         return output_dict
 
     
