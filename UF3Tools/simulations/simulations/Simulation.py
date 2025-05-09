@@ -90,6 +90,8 @@ class CompleteLammpsSimulation(LammpsSimulation):
         
     def run(self, local=False, overwrite=False):
         command = f"chmod 777 {self.run_script} && {self.run_script}"
+        print("running simulation with command: ", command)
+        print("simulation directory: ", self.simulation_directory)
         subprocess.run(command, shell=True, cwd=self.simulation_directory)
         return self.process_simulation_results()
     def get_directory(self):

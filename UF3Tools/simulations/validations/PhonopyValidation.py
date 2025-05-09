@@ -83,14 +83,26 @@ class PhonopyValidation(PotentialValidation):
         phonon = Phonopy(unitcell,
                         supercell_matrix)
         phonon.set_force_constants(force_constants)
-        phonon.run_mesh([60,60,60], with_eigenvectors=True, is_mesh_symmetry=False)
-        path = [[[0.5, 0.5, 0.5],  [0.0, 0.0, 0.0],  [0.5, 0.5, 0.0],  [0.0, 0.5, 0.0], [0.5, 0.0, 0.5]]]
-        labels = ["L", "$\\Gamma$", "X", "M", 'K']
+        phonon.run_mesh([30,30,30], with_eigenvectors=True, is_mesh_symmetry=False)
+        path = [[
+            [2/3, 1/3, 0.0],   # K
+            [0.0, 0.0, 0.0],   # Γ
+            [0.5, 0.0, 0.0],   # M
+            [2/3, 1/3, 0.0],   # K
+            [2/3, 1/3, 0.5],   # H
+            [0.0, 0.0, 0.5],   # A
+            [0.5, 0.0, 0.5],   # L
+            [0.5, 0.0, 0.0],   # M
+            [0.0, 0.0, 0.0],   # Γ
+            [0.0, 0.0, 0.5],   # A
+        ]]
+        labels = ["K", "$\\Gamma$", "M", "K", "H", "A", "L", "M", "$\\Gamma$", "A"]
+
         qpoints, connections = get_band_qpoints_and_path_connections(path, npoints=51)
         phonon.run_band_structure(qpoints, labels)
-        phonon.plot_band_structure().show()
+        #phonon.plot_band_structure().show()
         phonon.run_total_dos()
-        phonon.plot_total_dos().show()
+        #phonon.plot_total_dos().show()
         phonon.run_thermal_properties(t_step=10,
                               t_max=1000,
                               t_min=0)
@@ -117,14 +129,17 @@ class PhonopyValidation(PotentialValidation):
 
         comparison_results = {}
 
-        # Compare Band Structure
         dft_bands = np.array(self.dft_data["band_structure"]["frequencies"])
-        
-        lammps_bands = np.concatenate(self.lammps_data["phonon_band_structure"][2], axis=0)  # Merge all q-points
-        if dft_bands.shape == lammps_bands.shape:
-            band_rmse = np.sqrt(np.mean((dft_bands - lammps_bands) ** 2))
+        lammps_bands = np.concatenate(self.lammps_data["phonon_band_structure"][2], axis=0)
+
+        if np.any(lammps_bands < -0.5):
+            print("Negative frequencies detected in band structure. Skipping RMSE calculation.")
+            band_rmse = None
+        elif dft_bands.shape != lammps_bands.shape:
+            print("Mismatch in band structure shape. Skipping RMSE calculation.")
+            band_rmse = None
         else:
-            band_rmse = None  # Mismatch in shape, cannot compare directly
+            band_rmse = np.sqrt(np.mean((dft_bands - lammps_bands) ** 2))
 
         comparison_results["band_structure_rmse"] = band_rmse
 
@@ -137,21 +152,32 @@ class PhonopyValidation(PotentialValidation):
         else:
             dos_rmse = None  # Mismatch in shape, cannot compare directly
 
-        comparison_results["total_dos_rmse"] = dos_rmse * 100
+        comparison_results["total_dos_rmse"] = dos_rmse
 
-        # # Compare Thermal Properties
+
+        temps_dft = np.array(self.dft_data["thermal_properties"]["temperatures"])
+        temps_lammps = np.array(self.lammps_data["thermal_properties"]["temperatures"])
+
+        if not np.array_equal(temps_dft, temps_lammps):
+            raise ValueError("Temperature arrays do not match between DFT and LAMMPS.")
+
         thermal_keys = ["free_energy", "entropy", "heat_capacity"]
-        print(f'dft data: {self.dft_data}')
+
         for key in thermal_keys:
             dft_values = np.array(self.dft_data["thermal_properties"][key])
             lammps_values = np.array(self.lammps_data["thermal_properties"][key])
 
-            if dft_values.shape == lammps_values.shape and np.all(dft_values != 0):
-                percent_error = np.mean(np.abs((dft_values - lammps_values) / dft_values) * 100)
-            else:
-                percent_error = None  # Mismatch or division by zero
+            if dft_values.shape != lammps_values.shape:
+                comparison_results[f"{key}_percent_error"] = None
+                continue
 
-            comparison_results[f"{key}_percent_error"] = percent_error
+            nonzero_mask = dft_values != 0
+            if not np.any(nonzero_mask):
+                comparison_results[f"{key}_percent_error"] = None
+                continue
+
+            rel_error = np.abs((dft_values[nonzero_mask] - lammps_values[nonzero_mask]) / dft_values[nonzero_mask])
+            comparison_results[f"{key}_percent_error"] = np.mean(rel_error) * 100
 
         return comparison_results
 

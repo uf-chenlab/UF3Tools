@@ -58,7 +58,7 @@ class PotentialValidation:
         # Initialize simulation managers with absolute paths
         self.lammps_manager = None
         self.dft_manager = None
-        self.dft_result = {}
+        self.dft_data = {}
         self.lammps_results = []
     def setup_input_file(self, template_file, output_file, parameters=None):
         handler = LammpsInputFileHandler(template_file, output_file, parameters)
@@ -112,6 +112,8 @@ class PotentialValidation:
 
     def get_lammps_validation_results(self):
         return self.lammps_results
+    def get_dft_validation_results(self):
+        return self.dft_data
 
     def calculate_percent_error(self, dft_data, lammps_data):
         if dft_data is None or dft_data == 0:
@@ -126,64 +128,118 @@ class ValidationData:
         self.potential_file = potential_file
         self.structure = structure
         self.validation_data = {}
-        self.lammps_data={}
+        self.lammps_data = {}
         self.relative_order_results = {}
         self.normalized_error = None
+
+        # Storing raw data separately
+        self.raw_lammps_data = {}
+        self.raw_dft_data = {}
+
     def add_validation(self, validation_type, validation_results):
         self.validation_data[validation_type] = validation_results
+
+    def add_raw_data(self, validation_type, lammps_raw, dft_raw):
+        if validation_type not in self.raw_lammps_data:
+            self.raw_lammps_data[validation_type] = []
+        if validation_type not in self.raw_dft_data:
+            self.raw_dft_data[validation_type] = []
+        self.raw_lammps_data[validation_type].append(lammps_raw)
+        self.raw_dft_data[validation_type].append(dft_raw)
+
     def get_structure_id(self):
         return self.structure
+
     def get_potential_version(self):
         return self.potential_version
-    def get_validation_data(self):
-        return self.validation_data
+
     def get_potential_file(self):
         return self.potential_file
+
+    def get_validation_data(self):
+        return self.validation_data
+
     def getValidation(self, validation_type):
         return self.validation_data.get(validation_type, None)
+
     def set_normalized_error(self, error):
         self.normalized_error = error
+
     def get_normalized_error(self):
         return self.normalized_error
+
     def set_lammps_validation_results(self, lammps_data):
         self.lammps_data = lammps_data
+
     def add_lammps_validation_result(self, validation_type, lammps_data):
         self.lammps_data[validation_type] = lammps_data
+
     def get_lammps_validation_results(self):
         return self.lammps_data
+
     def get_relative_order_results(self):
         return self.relative_order_results
+
     def set_relative_order_results(self, relative_order_results):
         self.relative_order_results = relative_order_results
+
     def __str__(self):
         output = f"Potential version: {self.potential_version}\n"
         output += f"Structure: {self.structure}\n"
-        output += f'Normalized error: {self.normalized_error}\n'
-        output += f'Relative Order: {self.relative_order_results}\n'
+        output += f"Normalized error: {self.normalized_error}\n"
+        output += f"Relative Order: {self.relative_order_results}\n"
         for validation_type, validation_results in self.validation_data.items():
             output += f"{validation_type} validation results:\n"
-            # Check if validation_results is a list of dictionaries
             if isinstance(validation_results, list):
                 for result in validation_results:
                     if isinstance(result, dict):
                         for key, value in result.items():
-                            if isinstance(value, (int, float)):  # Check if the value is numeric
+                            if isinstance(value, (int, float)):
                                 output += f"  {key}: {value:.6f}%\n"
                             else:
-                                output += f"  {key}: {value}\n"  # Handle non-numeric values differently
+                                output += f"  {key}: {value}\n"
                     else:
-                        output += f"  {result}\n"  # Handle non-dictionary list items
+                        output += f"  {result}\n"
             else:
-                # Handle case where validation_results is a single dictionary
                 for key, value in validation_results.items():
-                    if isinstance(value, (int, float)):  # Check if the value is numeric
+                    if isinstance(value, (int, float)):
                         output += f"  {key}: {value:.6f}%\n"
                     else:
-                        output += f"  {key}: {value}\n"  # Handle non-numeric values differently
+                        output += f"  {key}: {value}\n"
         return output
+
     def save_to_file(self, directory):
-        with open(os.path.join(directory, f"{self.potential_file}_{self.potential_version}_validation.txt"), "w") as file:
+        path = os.path.join(directory, f"{self.potential_file}_{self.potential_version}_validation.txt")
+        with open(path, "w") as file:
             file.write(str(self))
+
+    def save_raw_data_to_file(self, directory):
+        base_filename = base_filename = self.potential_version.split("_")[0]
+        #trim the filename so it doenst have all of the parameters
+        
+        # Save LAMMPS data
+        lammps_path = os.path.join(directory, f"{base_filename}_lammps_raw_data.txt")
+        with open(lammps_path, "w") as file:
+            file.write(f"Potential version: {self.potential_version}\n")
+            file.write(f"Structure: {self.structure}\n\n")
+            file.write("Raw LAMMPS Data:\n")
+            for validation_type, data_list in self.raw_lammps_data.items():
+                file.write(f"  {validation_type}:\n")
+                for data in data_list:
+                    for k, v in data.items():
+                        file.write(f"    {k}: {v}\n")
+
+        # Save DFT data
+        dft_path = os.path.join(directory, f"{base_filename}_dft_raw_data.txt")
+        with open(dft_path, "w") as file:
+            file.write(f"Potential version: {self.potential_version}\n")
+            file.write(f"Structure: {self.structure}\n\n")
+            file.write("Raw DFT Data:\n")
+            for validation_type, data_list in self.raw_dft_data.items():
+                file.write(f"  {validation_type}:\n")
+                for data in data_list:
+                    for k, v in data.items():
+                        file.write(f"    {k}: {v}\n")
         
 class ValidationDataCompare:
     def __init__(self, validation_1, validation_2):

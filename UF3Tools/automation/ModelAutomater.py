@@ -48,7 +48,7 @@ class CoreManager:
 
 
 class ModelAutomater:
-    def __init__(self, directories, run_data_path, feature_filename, element_list, degree, chemical_system, maps, validation_folder=None, num_cores=1):
+    def __init__(self, directories, run_data_path, feature_filename, element_list, degree, chemical_system, bspline_config, data_folder=None, num_cores=1):
          # Class-wide LUT for filter types to corresponding methods
         self.FILTER_FUNCTION_LUT = {
             'composition': 'filter_composition',
@@ -64,6 +64,7 @@ class ModelAutomater:
             'min_epa': 'filter_min_epa',
             'unreasonable_epas': 'filter_unreasonable_epas',
             'gas': 'filter_gas',
+            'subsample':'filter_kmeans_subsample',
             'none': 'get_data'
             # Add new filters here as needed
         }
@@ -71,16 +72,18 @@ class ModelAutomater:
         self.directories = directories
         self.run_data_path = run_data_path
         self.feature_filename = feature_filename
-        self.validation_folder = validation_folder
+        
         self.element_list = element_list
         self.degree = degree
         self.chemical_system = chemical_system
-        self.maps = maps
+        self.bspline_config = bspline_config
         self.num_cores = num_cores
         self.base_directory = os.getcwd()
-        self.pickle_directory = self.base_directory + '/data/pickle_files/'
-        self.filter_directory = self.base_directory + '/data/pickle_files/filtered/'
-        self.feature_directory = self.base_directory + '/data/featurized/'
+        self.data_folder = data_folder if data_folder is not None else self.base_directory
+        print("data folder is: ", self.data_folder)
+        self.pickle_directory = os.path.join(self.data_folder , 'data/pickle_files/')
+        self.filter_directory = os.path.join(self.data_folder , 'data/pickle_files/filtered/')
+        self.feature_directory = os.path.join(self.data_folder , 'data/featurized/')
         self.validations_to_run = {
                 "lattice_constant": True,
                 "cohesive_energy": True,
@@ -139,7 +142,9 @@ class ModelAutomater:
     def get_chemical_system(self):
         return self.chemical_system
     def get_maps(self):
-        return self.maps    
+        return self.bspline_config  
+    def get_bspline_config(self):
+        return self.bspline_config
     def get_element_list(self):
         return self.element_list
     def get_degree(self):
@@ -239,7 +244,26 @@ class ModelAutomater:
             data_parser.export_to_pickle(self.pickle_directory + filename + '.pkl')
         
         self.load_existing_base_data()
+    def load_new_base_data_with_subsampling(self, min_diff=1e-3, max_samples=1000):
+        for directory in self.directories:
+            data_parser = DataParser([directory], io.DataCoordinator())
+            data_parser.parse_directories_with_subsampling(output=True, min_diff=min_diff, max_samples=max_samples)
+            
+            # Generate initial filename from the directory name
+            filename = directory.split('/')[-1] or directory.split('/')[-2]
 
+            # Check for banned names and duplicate files
+            path_parts = directory.split('/')
+            index = -1
+            while filename in self.banned_name_list or \
+                (self.pickle_directory + filename + '.pkl') in self._get_existing_pickle_files():
+                index -= 1
+                filename = path_parts[index] if -index <= len(path_parts) else f"unnamed_{abs(index)}"
+
+            # Export to pickle with the resolved filename
+            data_parser.export_to_pickle(self.pickle_directory + filename + '.pkl')
+        
+        self.load_existing_base_data()
     # Helper function to retrieve existing pickle files in the directory
     def _get_existing_pickle_files(self):
         import os
@@ -252,6 +276,31 @@ class ModelAutomater:
         for directory, name in zip(self.directories, names):
             data_parser = DataParser([directory], io.DataCoordinator())
             data_parser.parse_directories(output=True, filter=filter)
+            frame = data_parser.get_data()
+            print(f'Loaded data from {directory} with {len(frame)} entries.')
+            # Use provided name as the filename
+            filename = name
+
+            # Check for banned names and duplicate files
+            path_parts = directory.split('/')
+            index = -1
+            while filename in self.banned_name_list or \
+                (self.pickle_directory + filename + '.pkl') in self._get_existing_pickle_files():
+                index -= 1
+                filename = path_parts[index] if -index <= len(path_parts) else f"unnamed_{abs(index)}"
+
+            # Export to pickle with the resolved filename
+            data_parser.export_to_pickle(self.pickle_directory + filename + '.pkl')
+        os.chdir(dir)
+        self.load_specific_existing_base_data( names)
+        os.chdir(dir)
+    def load_new_base_data_with_names_with_subsampling(self, names, min_diff=1e-3, max_samples=1000):
+        if len(names) != len(self.directories):
+            raise ValueError("The number of names must match the number of directories.")
+        dir = os.getcwd()
+        for directory, name in zip(self.directories, names):
+            data_parser = DataParser([directory], io.DataCoordinator())
+            data_parser.parse_directories_with_subsampling(output=True, min_energy=min_diff, max_samples=max_samples)
             frame = data_parser.get_data()
             print(f'Loaded data from {directory} with {len(frame)} entries.')
             # Use provided name as the filename
@@ -369,7 +418,7 @@ class ModelAutomater:
                 continue
             output_file = f'df_features_{data_type}.h5'
             print(f"Generating feature for {data_type}")
-            featurizer = Featurizer(data, self.chemical_system, self.maps)
+            featurizer = Featurizer(data, self.chemical_system, self.bspline_config)
             featurizer.featurize_data(self.num_cores, output_file, self.feature_batch_size)
         self.load_existing_features()
     def clear_filtered_data(self):
@@ -476,40 +525,39 @@ class ModelAutomater:
         self.load_filtered_data()
     def filter_all_data(self, filter_type, check_existing=True, *args):
         """
-        Similar to generate_new_filtered_data, but applies the same filter to
-        *every* data file we have (i.e., all items in self.base_data_frames).
+        Apply a filter to all data types we have.
 
         Parameters:
-        - filter_type: The filter you'd like to apply (e.g. 'composition', 'energy_above_hull')
-        - check_existing: If True, will skip re-filtering if a filtered file already exists.
-        - args: Arguments to pass to the filter method.
+        - filter_type: The filter to apply (e.g., 'composition', 'energy_above_hull')
+        - check_existing: If True, apply the filter to already-filtered data if it exists
+        - args: Arguments to pass to the filter method
         """
-        # Loop through all data files in self.base_data_frames
         for data_filename, data in self.base_data_frames.items():
-            # The data type is usually the filename without '.pkl'
             data_type = data_filename.replace('.pkl', '')
 
-            # Skip if on the ignore list
             if data_type in self.data_ignore_list:
                 continue
 
             filtered_filename = f'{data_type}_filtered.pkl'
             filtered_file_path = os.path.join(self.filter_directory, filtered_filename)
 
-            # If we are told to check existing, see if we already have a filtered file
-            if check_existing and filtered_filename in self.filtered_data_frames:
-                # We already have filtered data for this data type; just skip
-                continue
+            if check_existing:
+                if filtered_filename in self.filtered_data_frames:
+                    data = self.filtered_data_frames[filtered_filename]
 
-            # Otherwise, we follow the same logic as generate_new_filtered_data
-            # Optionally, you can do checks for columns or "repair" data, etc.
+            else:
+                if data_filename not in self.base_data_frames:
+                    continue
+                data = self.base_data_frames[data_filename]
+                if data_type == 'structure':
+                    if not self.check_structure_data(data):
+                        data = self.repair_structure_data(data)
+                        self.replace_existing_data(data_filename, data)
+
+            data_filter = DataFilter(data)
             print(f"Filtering {data_type} data with {filter_type} filter.")
             print(f"Current data length: {len(data)}")
 
-            # Create a DataFilter instance
-            data_filter = DataFilter(data)
-
-            # Find the appropriate filter method
             filter_method_name = self.FILTER_FUNCTION_LUT.get(filter_type)
             if not filter_method_name:
                 print(f"Unsupported filter type: {filter_type}")
@@ -520,15 +568,14 @@ class ModelAutomater:
                 print(f"Filter method {filter_method_name} not found in DataFilter.")
                 continue
 
-            # Apply the filter
             filter_method(*args)
 
-            # Export the filtered data
             data_filter.export_to_pickle(filtered_file_path)
+
             print(f"Filtered data length: {len(data_filter.get_data())}")
 
-            # Reload the filtered data so self.filtered_data_frames is up to date
             self.load_filtered_data()
+
    
     def copy_unfiltered_data(self):
         """
@@ -693,7 +740,7 @@ class ModelAutomater:
                 continue
             features.append(self.feature_paths[key])
 
-        trainer = ModelTrainer(self.model_data, self.chemical_system, self.maps, regularizer)
+        trainer = ModelTrainer(self.model_data, self.chemical_system, self.bspline_config, regularizer)
         trainer.set_training_set(training_data)
         trainer.set_testing_set(testing_data)
         
@@ -726,7 +773,7 @@ class ModelAutomater:
             if(data_type in self.data_ignore_list):
                 continue
             features.append(self.feature_paths[key])
-        trainer = ModelTrainer(self.model_data, self.chemical_system, self.maps, regularizer)
+        trainer = ModelTrainer(self.model_data, self.chemical_system, self.bspline_config, regularizer)
         trainer.set_training_set(training_data)
         trainer.set_testing_set(testing_data)
         if(len(features) == 1):
@@ -759,7 +806,7 @@ class ModelAutomater:
                 structure_feature = feature
                 break
         if(self.trainer is None):
-            self.trainer = ModelTrainerMultipleSteps(self.model_data, self.chemical_system, self.maps, regularizer)
+            self.trainer = ModelTrainerMultipleSteps(self.model_data, self.chemical_system, self.bspline_config, regularizer)
         self.trainer.set_training_set(training_data)
         self.trainer.set_testing_set(testing_data)
         if(len(features) == 0):
@@ -813,7 +860,7 @@ class ModelAutomater:
                 break
         
         # Use the ModelTrainer to import the model
-        trainer = ModelTrainer(self.model_data, self.chemical_system, self.maps, regularizer)
+        trainer = ModelTrainer(self.model_data, self.chemical_system, self.bspline_config, regularizer)
         trainer.import_model(model_filename)
         
         # Retrieve the imported model
@@ -825,21 +872,36 @@ class ModelAutomater:
         # Return the chemical system and the imported model
         return self.chemical_system, imported_model, trainer.get_bspline_config(), features
     def store_validation_data(self, model_filename, validation_data):
-        """
-        Store the validation data for a given model.
-        """
-        #store the validation data in potentials folder
-        with open(f'potentials/{model_filename}_validation_data.txt', 'w') as f:
-                    f.write(str(validation_data) + '\n')
-                    f.flush()
+        print("writing validation data to file")
+
+        potential_dir = os.path.abspath('potentials')
+        if not os.path.exists(potential_dir):
+            os.makedirs(potential_dir)
+
+        validation_file = os.path.join(potential_dir, f"{model_filename}_validation_data.txt")
+        with open(validation_file, 'w') as f:
+            if isinstance(validation_data, list):
+                for data in validation_data:
+                    f.write(str(data))
+                    f.write('\n')
+            else:
+                f.write(str(validation_data))
+                f.write('\n')
+
+        if isinstance(validation_data, list):
+            for data in validation_data:
+                data.save_raw_data_to_file(potential_dir)
+        else:
+            validation_data.save_raw_data_to_file(potential_dir)
+
         self.validation_datas.append(validation_data)
-        
-        #write the entire validation datas to a file
-        with open('validation_datas.txt', 'w') as f:
-            for data2 in self.validation_datas:
-                for data in data2:
-                    f.write(str(data) + '\n')
-                    f.flush()
+
+        all_data_file = os.path.abspath('validation_datas.txt')
+        with open(all_data_file, 'w') as f:
+            for data_group in self.validation_datas:
+                for data in data_group:
+                    f.write(str(data))
+                    f.write('\n')
     def store_validation_data_local(self, model_filename, validation_data):
         """
         Store the validation data for a given model.
@@ -859,33 +921,38 @@ class ModelAutomater:
                     f.write(str(data) + '\n')
                     f.flush()
     def store_validation_data_alternate_dir(self, model_filename, validation_data, base_folder):
-        """
-        Store the validation data for a given model.
-        """
-        #store the validation data in potentials folder
         print("writing validation data to file")
-        dire = os.getcwd()
-        
-            
-        os.chdir(base_folder)
-        potential_dir = os.path.join(base_folder, 'potentials')
+        abs_base = os.path.abspath(base_folder)
+        potential_dir = os.path.join(abs_base, 'validation_datas')
         if not os.path.exists(potential_dir):
             os.makedirs(potential_dir)
-        with open(f'potentials/{model_filename}_validation_data.txt', 'w') as f:
+
+        # Write the primary percent-error data
+        validation_file = os.path.join(potential_dir, f"{model_filename}_validation_data.txt")
+        with open(validation_file, 'w') as f:
             if isinstance(validation_data, list):
                 for data in validation_data:
                     f.write(str(data))
+                    f.write('\n')
             else:
                 f.write(str(validation_data))
+                f.write('\n')
+
+        # Save raw data for each ValidationData object to a separate file
+        if isinstance(validation_data, list):
+            for data in validation_data:
+                data.save_raw_data_to_file(potential_dir)
+        else:
+            validation_data.save_raw_data_to_file(potential_dir)
+
+        # If you keep a master list, you can write them all below
         self.validation_datas.append(validation_data)
-        
-        #write the entire validation datas to a file
-        with open('validation_datas.txt', 'w') as f:
-            for data2 in self.validation_datas:
-                for data in data2:
-                    f.write(str(data) + '\n')
-                    f.flush()
-        os.chdir(dire)
+        all_data_file = os.path.join(abs_base, 'validation_datas.txt')
+        with open(all_data_file, 'w') as f:
+            for data_group in self.validation_datas:
+                for data in data_group:
+                    f.write(str(data))
+                    f.write('\n')
         
     def get_all_dataframes(self):
         """

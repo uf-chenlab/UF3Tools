@@ -36,7 +36,7 @@ def worker_init_once(
     base_directory,
     element_list,
     chemical_system,
-    maps,
+    bspline_config,
     degree,
     ignore_list,
     settings,
@@ -82,7 +82,7 @@ def worker_init_once(
         element_list=element_list,
         degree=degree,
         chemical_system=chemical_system,
-        maps=maps,
+        bspline_config=bspline_config,
         num_cores=1
     )
     print("init once automater")
@@ -113,9 +113,10 @@ def worker_init_once(
     
     return f"Data loaded on {worker_hostname}"
 
-def validate_potential_with_timeout(analyzer, potential_label, model_filename, element_list, rmse,validations_to_run, relative_order, timeout=600):
+def validate_potential_with_timeout(analyzer, potential_label, model_filename, element_list, rmse,validations_to_run, relative_order, timeout=3600):
     # assumes 999 loss if the simulation takes too long (it blew up)
     def run_validation():
+        print("calling validate potential - optuna handler")
         return analyzer.validate_potential(potential_label, model_filename, element_list, rmse, validations_to_run, relative_order)
     with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
         future = executor.submit(run_validation)
@@ -236,7 +237,7 @@ def parse_validation_data(validation_data, normalized_error, acceptable_errors, 
     print("Final Loss:", final_loss)
     if final_loss is None:
         return None
-    if(final_loss <= 0.05):
+    if(final_loss <= 0.00001):
         return None
     else:
         return final_loss
@@ -308,22 +309,28 @@ def train_with_preloaded_data(params, settings, trial_id=0):
     analyzer.set_lammps_validation_structures(automater.get_lammps_validation_structures())
     analyzer.set_single_crystal_validation_structures(automater.get_single_crystal_validation_structures())
     analyzer.set_up_folder_structure()
-    if 'al' in settings['chemical_formula'].lower():
-        analyzer.fix_repulsion_2b(pair=('Al', 'Al'), r_target=0.25, min_curvature=50.0)
-    result = analyzer.test_model_prediction(training=False)
+    for pair in chemical_system.interactions_map[2]:
+        analyzer.fix_repulsion_2b(pair=pair, r_target=1.0, min_curvature=50.0)
+    normalized_error=0
     if(settings['loss_weights']['error'] == 0):
         normalized_error = 0
     else:
+        result = analyzer.test_model_prediction(training=False)
         normalized_error= 0.5*((result['rmse_e']/result['sigma_e']) + (result['rmse_f']/result['sigma_f']))
+    
 
+    potential_file = os.path.join(os.getcwd(), "potentials", model_filename)
     analyzer.export_model_to_lammps(
-        os.getcwd(), 
+        os.path.join(os.getcwd(), "potentials"), 
         model_filename, 
         True, 
         "ntaormina", 
         "metal", 
         "nk"
     )
+    model_folder = os.path.join(os.getcwd(), "model_files")
+    os.makedirs(model_folder, exist_ok=True)
+    analyzer.export_model_to_json(model_folder, model_filename)
     print("export model to lammps")
     if settings['loss_weights']['error'] == 0:
         rmse = False
@@ -331,9 +338,10 @@ def train_with_preloaded_data(params, settings, trial_id=0):
         rmse = True
     try:
         validation_data = validate_potential_with_timeout(
-            analyzer, potential_label, model_filename, 
-            settings['element_list'], rmse, settings['validations_to_run'], settings['relative_orders'], timeout=1200
+            analyzer, potential_label, potential_file, 
+            settings['element_list'], rmse, settings['validations_to_run'], settings['relative_orders'], timeout=7200
         )
+        print("validation data: ", validation_data)
         if(validation_data is None):
             print("validation data is none! timed out")
             return None, 999  # Assigning high loss
@@ -424,7 +432,7 @@ def run_optuna_tpe_with_dask_hpc(
         'ignore_list':automater.get_ignore_list(),
         'element_list': automater.get_element_list(),
         'chemical_system':automater.get_chemical_system(),
-        'maps':automater.get_maps(),
+        'bspline_config':automater.get_bspline_config(),
         'degree':automater.get_degree()
         
     }
@@ -454,7 +462,7 @@ def run_optuna_tpe_with_dask_hpc(
         settings['base_directory'],
         automater.get_element_list(),
         automater.get_chemical_system(),
-        automater.get_maps(),
+        automater.get_bspline_config(),
         automater.get_degree(),
         automater.get_ignore_list(),
         settings,

@@ -92,7 +92,9 @@ class ValidationManager:
         """
         Run the validation process without using os.chdir().
         """
-
+        modifier = LAMMPSModifier(self.lammps_model_file)
+        elements = modifier.get_elements()
+        self.kwargs.update({'uf3_elements': elements})
         # Determine the base simulations needed
         for validation in self.validations_to_run:
             if validation not in self.validation_lut:
@@ -147,7 +149,7 @@ class ValidationManager:
 
         # Sort validations by computational weight
         self.validations_to_run.sort(key=lambda x: self.validation_lut[x].get_computational_weight())
-
+        print("base simulations are complete")
         # Run validations
         for validation in self.validations_to_run:
             print(f'Running validation: {validation}')
@@ -189,13 +191,15 @@ class ValidationManager:
 
             # Run validation
             result = validation_class.start_validation(overwrite=overwrite, local=local)
+            print(f"Validation result: {result}")
             lammps_raw = validation_class.get_lammps_validation_results()
+            dft_raw = validation_class.get_dft_validation_results()
 
             print(f"Validation: {validation} - Percent Error: {result}")
 
             # Store results
             self.validation_data.add_validation(validation, result)
-            self.validation_data.add_lammps_validation_result(validation, lammps_raw)
+            self.validation_data.add_raw_data(validation, lammps_raw, dft_raw)
 
         return self.validation_data
             

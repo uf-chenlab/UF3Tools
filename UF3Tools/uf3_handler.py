@@ -2,6 +2,8 @@ import glob
 import os
 import pandas as pd
 from UF3Tools.simulations.managers.ValidationManager import ValidationManager, SingleCrystalValidationManager
+from sklearn.cluster import MiniBatchKMeans
+from sklearn.metrics import pairwise_distances_argmin_min
 import numpy as np
 import matplotlib.pyplot as plt
 from uf3.data import io
@@ -15,6 +17,7 @@ from uf3.forcefield import lammps
 from uf3.util import parallel
 from uf3.util import plotting
 from uf3.util import plotting3d
+from uf3.util.subsample import *
 from pymatgen.core.composition import Composition
 from pymatgen.analysis.phase_diagram import *
 from pymatgen.core import Structure
@@ -175,7 +178,65 @@ class DataParser:
         if parsedFiles > 0:
             self.data = self.data_coordinator.consolidate()
             self.check_and_convert_indices()
+    def parse_directories_with_subsampling(self, output, max_samples=1000, min_energy=1e-3):
+        parsed_files = 0
+        visited_directories = set()
+        data_paths = []
+        prefixes = {}
 
+        while True:
+            new_directories_found = False
+
+            for directory in self.directories:
+                for root, dirs, files in os.walk(directory):
+                    if root in visited_directories:
+                        continue
+                    visited_directories.add(root)
+                    print(f"Parsing directory: {root}")
+
+                    relative_path = os.path.relpath(root, directory)
+                    path_parts = relative_path.split(os.sep)
+                    folder_name = '_'.join([os.path.basename(directory)] + path_parts)
+
+                    outcar_files = glob.glob(os.path.join(root, 'OUTCAR*'))
+
+                    for file in outcar_files:
+                        match = re.match(r'OUTCAR_(\d+)_(\d+)', os.path.basename(file))
+                        if match:
+                            run_number = match.group(1)
+                            index_number = match.group(2)
+                            prefix = f'ind_{folder_name}_run_{run_number}__{index_number}'
+                        else:
+                            print(f"Using default index naming: {os.path.basename(file)}")
+                            prefix = f'ind_{root}_{folder_name}_run_{os.path.basename(file)}'
+
+                        if len(prefix) > 200:
+                            excess_length = len(prefix) - 200
+                            prefix = prefix[excess_length:]
+
+                        print("debug data prefix:", prefix)
+                        data_paths.append(file)
+                        prefixes[file] = prefix
+
+                    new_directories_found = True
+
+            if not new_directories_found:
+                break
+
+        if data_paths:
+            io.parse_with_subsampling(
+                data_paths=data_paths,
+                data_coordinator=self.data_coordinator,
+                max_samples=max_samples,
+                min_diff=min_energy,
+                prefixes=prefixes
+            )
+            parsed_files = len(data_paths)
+
+        if parsed_files > 0:
+            self.data = self.data_coordinator.consolidate()
+            self.check_and_convert_indices()
+                          
     def check_and_convert_indices(self):
         """
         Check if the DataFrame indices are in the correct format (ind_#_run_#__#).
@@ -272,7 +333,10 @@ class DataParser:
         """
         return self.data.index.to_series().apply(lambda x: '_'.join(x.split('_')[:2])).unique()
 
-    
+import matplotlib.pyplot as plt
+import numpy as np
+from collections import defaultdict
+from ase.neighborlist import neighbor_list    
 class DataSetAnalyzer:
     # Class-wide variable to hold the data type prefixes
     DATA_TYPE_PREFIXES = {
@@ -325,117 +389,6 @@ class DataSetAnalyzer:
         """
         return self.data.index.to_series().apply(lambda x: '_'.join(x.split('_')[:2])).unique()
 
-    def get_structure_data(self):
-        """
-        Get the structure data from the DataFrame.
-
-        :return: DataFrame containing structure data.
-        """
-        # Exclude rows with any of the data type prefixes in the index
-        pattern = '|'.join(DataSetAnalyzer.DATA_TYPE_PREFIXES.values())
-        return self.data[~self.data.index.str.contains(pattern)]
-
-    def get_data_by_type(self, data_type):
-        """
-        Get the data from the DataFrame based on the specified data type.
-
-        :param data_type: Type of data to retrieve (e.g., 'pressure', 'temperature').
-        :return: DataFrame containing the specified type of data.
-        """
-        if data_type.lower() in DataSetAnalyzer.DATA_TYPE_PREFIXES.lower():
-            prefix = DataSetAnalyzer.DATA_TYPE_PREFIXES[data_type].lower()
-            return self.data[self.data.index.str.contains(prefix)]
-        else:
-            raise ValueError(f"Data type '{data_type}' is not recognized. Available types: {list(DataSetAnalyzer.DATA_TYPE_PREFIXES.keys())}")
-
-    def get_pressure_data(self):
-        """
-        Get the pressure data from the DataFrame.
-
-        :return: DataFrame containing pressure data.
-        """
-        return self.get_data_by_type("pressure")
-
-    def get_temperature_data(self):
-        """
-        Get the temperature data from the DataFrame.
-
-        :return: DataFrame containing temperature data.
-        """
-        return self.get_data_by_type("temperature")
-
-    def get_strain_data(self):
-        """
-        Get the strain data from the DataFrame.
-
-        :return: DataFrame containing strain data.
-        """
-        return self.get_data_by_type("strain")
-
-    def get_defect_data(self):
-        """
-        Get the defect data from the DataFrame.
-
-        :return: DataFrame containing defect data.
-        """
-        return self.get_data_by_type("defect")
-     
-    def get_data_type_counts(self):
-        """
-        Get the counts of data types in the DataFrame.
-
-        :return: Dictionary containing the count of each data type.
-        """
-        data_type_counts = {}
-        for data_type in DataSetAnalyzer.DATA_TYPE_PREFIXES:
-            data_type_counts[data_type] = len(self.get_data_by_type(data_type))
-        return data_type_counts
-
-    def get_data_type_proportions(self):
-        """
-        Get the proportions of data types in the DataFrame.
-
-        :return: Dictionary containing the proportion of each data type.
-        """
-        data_type_proportions = {}
-        total_data = self.get_data_length()
-        data_type_counts = self.get_data_type_counts()
-        for data_type, count in data_type_counts.items():
-            data_type_proportions[data_type] = count / total_data
-        return data_type_proportions
-
-    def adjust_data_proportions(self, target_proportions):
-        """
-        Adjust the proportions of each data type in the DataFrame to match the target proportions.
-
-        :param target_proportions: Dictionary specifying the target proportions for each data type.
-                                   The values should sum to 1.0 or 100%.
-        """
-        # Ensure the target proportions are valid
-        if abs(sum(target_proportions.values()) - 1.0) > 1e-6:
-            raise ValueError("The target proportions must sum to 1.0 (or 100%).")
-
-        # Calculate the total number of data points after adjustment
-        total_data_points = self.get_data_length()
-
-        adjusted_data = self.get_structure_data()  # Start with structure data
-
-        for data_type, target_prop in target_proportions.items():
-            target_count = int(target_prop * total_data_points)
-            current_data = self.get_data_by_type(data_type)
-            current_count = len(current_data)
-
-            if current_count < target_count:
-                # Duplicate data to reach the target proportion
-                num_repeats = (target_count + current_count - 1) // current_count  # Ceiling division
-                replicated_data = pd.concat([current_data] * num_repeats)
-                adjusted_data = pd.concat([adjusted_data, replicated_data.iloc[:target_count]])
-            else:
-                # If the current count meets or exceeds the target, just add the data
-                adjusted_data = pd.concat([adjusted_data, current_data])
-
-        # Update the data with the adjusted DataFrame
-        self.set_data(adjusted_data)
     
     def export_to_pickle(self, filename):
         """
@@ -465,6 +418,27 @@ class DataSetAnalyzer:
         plt.ylabel('Frequency')
         plt.title('Energy above hull histogram')
         plt.show()
+        
+    def plot_epa_histogram(self, bins=20, alpha=0.5, upper_bound=None, lower_bound=None):
+        """
+        Plot a histogram of the energy per atom values, with optional upper and lower bounds.
+        """
+        # Apply lower bound filter if specified
+        if lower_bound is not None:
+            filtered_data = self.data[self.data['energy_per_atom'] >= lower_bound]
+        else:
+            filtered_data = self.data
+
+        # Apply upper bound filter if specified
+        if upper_bound is not None:
+            filtered_data = filtered_data[filtered_data['energy_per_atom'] <= upper_bound]
+
+        # Plot the histogram with the filtered data
+        filtered_data['energy_per_atom'].plot.hist(bins=bins, alpha=alpha)
+        plt.xlabel('Energy per atom (eV/atom)')
+        plt.ylabel('Frequency')
+        plt.title('Energy per atom histogram')
+        plt.show()
 
     def plot_composition_histogram(self, element, bins=20, alpha=0.5):
         """
@@ -477,7 +451,7 @@ class DataSetAnalyzer:
         plt.show()
         
 
-    def plot_force_histogram(self, bins=20, alpha=0.5, bin_range=None):
+    def plot_force_histogram(self, bins=20, alpha=0.5, bin_range=[-10, 10]):
         """
         Plot histograms for the forces fx, fy, and fz with an optional bin range.
         
@@ -506,6 +480,34 @@ class DataSetAnalyzer:
         plot_histogram(self.data, 'fx', bins, alpha, bin_range)
         plot_histogram(self.data, 'fy', bins, alpha, bin_range)
         plot_histogram(self.data, 'fz', bins, alpha, bin_range)
+        
+    def plot_2b_pair_distance_densities(self, chemical_system, r_max=7.0, bins=200):
+        # Collect pairwise distances for each 2-body interaction
+        pair_distances = defaultdict(list)
+        for atoms in self.data['geometry']:
+            # compute full neighbor list
+            i_list, j_list, distances = neighbor_list('ijd', atoms, cutoff=r_max)
+            symbols = atoms.get_chemical_symbols()
+            for i, j, dist in zip(i_list, j_list, distances):
+                if i >= j:
+                    continue  # avoid double-counting
+                pair = tuple(sorted((symbols[i], symbols[j])))
+                if pair in chemical_system.interactions_map[2]:
+                    pair_distances[pair].append(dist)
+        
+        # Plot normalized histograms
+        for pair, dists in pair_distances.items():
+            dists = np.array(dists)
+            hist, edges = np.histogram(dists, bins=bins, range=(0, r_max), density=True)
+            centers = 0.5 * (edges[1:] + edges[:-1])
+            plt.plot(centers, hist, label=f'{pair[0]}-{pair[1]}')
+
+        plt.xlabel('Pair distance (Å)')
+        plt.ylabel('Relative density')
+        plt.title('2-body pair distance densities')
+        plt.legend()
+        plt.grid(True)
+        plt.show()
 
     
 
@@ -739,6 +741,9 @@ class DataFilter:
         self.data = data
     def filter_reduce_data_points(self, num_points):
         print(f"Reducing data from {len(self.data)} points to {num_points} points.")
+        if num_points >= len(self.data):
+            print("Requested number of points is greater than or equal to the current data size. No reduction applied.")
+            return
         self.data = self.data.sample(n=num_points)
     def filter_increase_data_points(self, num_points):
         additional_rows_needed = num_points - len(self.data)
@@ -888,10 +893,64 @@ class DataFilter:
         print(f"Removed {removed_count} outlier rows based on IQR filtering of energy_per_atom.")
         
         self.data = filtered_df
-        
+    def filter_kmeans_subsample(self, n_samples, column='energy_per_atom'):
+        """
+        Subsample data using MiniBatch KMeans on a single column or descriptor vector.
+        Picks one representative per cluster.
+        """
+        print(f"Current data length: {len(self.data)}")
+
+        if column not in self.data.columns:
+            print(f"Missing column: '{column}'")
+            return
+
+        X = self.data[column].values
+
+        # handle case where each entry is a float
+        if not hasattr(X[0], '__len__'):
+            X = np.array(X).reshape(-1, 1)
+        else:
+            X = np.stack(X).astype(float)
+
+        if n_samples >= len(X):
+            print("Requested sample count >= dataset size. Skipping.")
+            return
+
+        kmeans = MiniBatchKMeans(n_clusters=n_samples, batch_size=2048, max_iter=100)
+        kmeans.fit(X)
+
+        closest_idx, _ = pairwise_distances_argmin_min(kmeans.cluster_centers_, X)
+        self.data = self.data.iloc[np.sort(closest_idx)]
+
+        print(f"Filtered data length: {len(self.data)}")
+    def filter_farthest_point_subsample(self, max_samples, min_diff, column='energy_per_atom'):
+        """
+        Subsample using farthest point sampling on a single column (e.g., energy_per_atom).
+        """
+        print(f"Current data length: {len(self.data)}")
+
+        if column not in self.data.columns:
+            print(f"Missing column: '{column}'")
+            return
+
+        values = self.data[column].values.astype(float)
+        values = values[:, np.newaxis]  # shape (N, 1)
+
+        if (max_samples > 0) and (min_diff > 0):
+            if max_samples < 1:
+                max_samples = int(np.ceil(len(values) * max_samples))
+            subsamples = farthest_point_sampling(
+                values,
+                max_samples=max_samples,
+                min_diff=min_diff)
+        else:
+            subsamples = np.arange(len(values))
+
+        self.data = self.data.iloc[np.sort(subsamples)]
+        print(f"Filtered data length: {len(self.data)}")  
 
 class Featurizer:
-    def __init__(self, data, chemical_system, maps):
+    def __init__(self, data, chemical_system, bspline_config):
         """
         Initialize the Featurizer with a DataFrame containing parsed data.
 
@@ -899,13 +958,7 @@ class Featurizer:
         """
         self.data = data
         self.chemical_system = chemical_system
-        self.maps = maps
-        self.bspline_config = bspline.BSplineBasis(chemical_system,
-                                                   r_min_map=maps['r_min_map'], 
-                                                   r_max_map=maps['r_max_map'],
-                                                   resolution_map=maps['r_resolution_map'],
-                                                   leading_trim=maps['leading_trim'],
-                                                   trailing_trim=maps['trailing_trim'])
+        self.bspline_config = bspline_config
         self.representation = process.BasisFeaturizer(self.bspline_config)
         
     def get_data(self):
@@ -938,13 +991,13 @@ class Featurizer:
         """
         Get the maps.
         """
-        return self.maps
+        return self.bspline_config
     
     def set_maps(self, maps):
         """
         Set the maps.
         """
-        self.maps = maps
+        self.bspline_config = maps
     
     def get_chemical_system(self):
         """
@@ -1004,7 +1057,7 @@ class Featurizer:
         )
         
 class ModelTrainer:
-    def __init__(self, data, chemical_system, maps, regularizer):
+    def __init__(self, data, chemical_system, bspline_config, regularizer):
         """
         Initialize the ModelTrainer with a DataFrame containing parsed data.
 
@@ -1012,13 +1065,7 @@ class ModelTrainer:
         """
         self.data = data
         self.chemical_system = chemical_system
-        self.maps = maps
-        self.bspline_config = bspline.BSplineBasis(chemical_system,
-                                                   r_min_map = maps['r_min_map'], 
-                                                   r_max_map = maps['r_max_map'],
-                                                   resolution_map=maps['r_resolution_map'],
-                                                   leading_trim=maps['leading_trim'],
-                                                   trailing_trim=maps['trailing_trim'])
+        self.bspline_config = bspline_config
         self.representation = process.BasisFeaturizer(self.bspline_config)
         self.regularizer = self.bspline_config.get_regularization_matrix(ridge_1b=regularizer['ridge_1b'],
                                                                     ridge_2b=regularizer['ridge_2b'],
@@ -1052,12 +1099,12 @@ class ModelTrainer:
         """
         Get the maps.
         """
-        return self.maps
+        return self.bspline_config
     def set_maps(self, maps):
         """
         Set the maps.
         """
-        self.maps = maps
+        self.bspline_config = maps
     def get_chemical_system(self):
         """
         Get the chemical system.
@@ -1206,7 +1253,7 @@ class ModelTrainer:
         """
         return self.model
 class ModelTrainerMultipleSteps:
-    def __init__(self, data, chemical_system, maps, regularizer):
+    def __init__(self, data, chemical_system, bspline_config, regularizer):
         """
         Initialize the ModelTrainer with a DataFrame containing parsed data.
 
@@ -1214,13 +1261,7 @@ class ModelTrainerMultipleSteps:
         """
         self.data = data
         self.chemical_system = chemical_system
-        self.maps = maps
-        self.bspline_config = bspline.BSplineBasis(chemical_system,
-                                                   r_min_map = maps['r_min_map'], 
-                                                   r_max_map = maps['r_max_map'],
-                                                   resolution_map=maps['r_resolution_map'],
-                                                   leading_trim=maps['leading_trim'],
-                                                   trailing_trim=maps['trailing_trim'])
+        self.bspline_config = bspline_config
         self.representation = process.BasisFeaturizer(self.bspline_config)
         self.regularizer = self.bspline_config.get_regularization_matrix(ridge_1b=regularizer['ridge_1b'],
                                                                     ridge_2b=regularizer['ridge_2b'],
@@ -1255,12 +1296,12 @@ class ModelTrainerMultipleSteps:
         """
         Get the maps.
         """
-        return self.maps
+        return self.bspline_config
     def set_maps(self, maps):
         """
         Set the maps.
         """
-        self.maps = maps
+        self.bspline_config = maps
     def get_chemical_system(self):
         """
         Get the chemical system.
@@ -1634,7 +1675,14 @@ class ModelAnalyzer:
         """
         generator = UF3LammpsPotentialGenerator(self.model, self.chemical_system, self.bspline_config)
         generator.generate_potential_file(directory=directory, filename=filename, overwrite=overwrite, author=author, units=units, knots_spacing_type=knots_spacing_type)
+    def export_model_to_json(self, directory, filename):
+        """
+        Export the model to a JSON file.
 
+        :param directory: Directory where the JSON file will be saved.
+        """
+        self.model.to_json(os.path.join(directory, filename))
+        print(f'Model has been exported to {os.path.join(directory, filename)}')
     def set_up_folder_structure(self):
         current_directory = os.getcwd()
         validation_folder_path = os.path.join(current_directory, "validation")
@@ -1776,6 +1824,7 @@ class ModelAnalyzer:
         """
         print("validate potential entry1")
         print('validate potential element list:', element_list)
+        print("validate potential dft validation structures: ", self.dft_validation_structures)
         current_directory = os.getcwd()
         datas = []
         if validations_to_run is None:
@@ -1788,12 +1837,13 @@ class ModelAnalyzer:
             
             
         def process_structure(structure, single_crystal_data=None):
+            print("process structure started AnalyzerValidatePotential")
             if "POSCAR" in structure or "LAMMPS" in structure:
                 print(f"Skipping structure containing POSCAR or LAMMPS: {structure}")
                 return None
 
             structure_id = structure.replace("mp-", "")
-            
+            print("process structure AnalyzerValidatePotential")
             validation_folder_path = os.path.join(current_directory, "validation/structures", structure)
             if self.dft_validation_structures:
                 dft_validation_folder = os.path.join(self.dft_validation_folder, structure)
@@ -1807,7 +1857,7 @@ class ModelAnalyzer:
                 return None
 
             element_list_str = " ".join(element_list)
-
+            print("abotu to make validationmanager AnalyzerValidatePotential")
             manager = ValidationManager(
                 potential_version,
                 structure_id,
@@ -1821,14 +1871,16 @@ class ModelAnalyzer:
             )
             if(single_crystal_data is not None):
                 manager.set_single_crystal_data(single_crystal_data)
-
+            print("createdf validation manager AnalyzerValidatePotential")
             data = manager.run_validation()
+            print("validation manager finishesd")
             if rmse == True:
+                print("calculating normalized error")
                 normalized_error = self.calculate_normalized_error(self.test_model_prediction())
             else:
                 normalized_error = None
             data.set_normalized_error(normalized_error)
-
+            print("process structure finished")
             return data
         single_crystal_data = None
         if 'formation_energy' in validations_to_run:
@@ -1858,7 +1910,7 @@ class ModelAnalyzer:
                 single_crystal_data = manager.run_validation()
                 print("Single crystal validation data:", single_crystal_data)
 
-
+        print("about to give workers processstructure - analyzerValidatePotential")
         with ThreadPoolExecutor(max_workers=4) as executor:
             future_to_structure = {
                 executor.submit(process_structure, s, single_crystal_data): s for s in self.dft_validation_structures
@@ -1867,6 +1919,7 @@ class ModelAnalyzer:
                 result = future.result()
                 if result:
                     datas.append(result)
+                    print("structure processed")
 
         relative_order_result = {}
 
@@ -1896,111 +1949,120 @@ class ModelAnalyzer:
             # Store the relative order results back into each data object
             for data in datas:
                 data.set_relative_order_results(relative_order_result)
-
+        print("ModelAnalyzer returning validate_potential")
         return datas
 
 
 from datetime import datetime     
 class UF3LammpsPotentialGenerator:
     def __init__(self, model, chemical_system, bspline_config):
-        """
-        Initialize the UF3LammpsPotentialGenerator with a model, chemical system, and B-spline configuration.
-
-        :param model: The UF3 model object.
-        :param chemical_system: The chemical system object associated with the model.
-        :param bspline_config: The B-spline configuration object.
-        """
         self.model = model
         self.chemical_system = chemical_system
         self.bspline_config = bspline_config
 
     def export_model_to_json(self, filename):
-        """
-        Export the model to a JSON file.
-
-        :param filename: Name of the JSON file.
-        """
         self.model.to_json(filename)
 
-    def generate_potential_file(self, directory, filename=None, overwrite=True, author="author", units="metal", knots_spacing_type="nk"):
-        """
-        Generate the UF3 LAMMPS potential file.
-
-        :param directory: Directory path where the potential file will be saved.
-        :param filename: Filename for the potential file. If not provided, it will be generated from the chemical system.
-        :param author: Author of the potential file.
-        :param units: LAMMPS units.
-        :param knots_spacing_type: Knot spacing type, 'uk' (uniform) or 'nk' (non-uniform).
-        """
+    def generate_potential_file(self, directory, filename=None, overwrite=True,
+                                author="author", units="metal", knots_spacing_type="nk"):
         if not os.path.exists(directory):
-            os.makedirs(directory)
+            os.mkdir(directory)
 
         if filename is None:
             filename = "".join(self.chemical_system.element_list) + ".uf3"
-        
-        full_path = os.path.join(directory, filename)
 
-        # Check if file exists and add a timestamp if necessary
+        full_path = os.path.join(directory, filename)
         if os.path.exists(full_path) and not overwrite:
-            current_datetime = datetime.now().strftime("%Y%m%d_%H%M%S")
-            filename = filename + "_" + current_datetime
+            now = datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename += f"_{now}"
             full_path = os.path.join(directory, filename)
 
-        self._write_uf3_lammps_pot_files(full_path, author, units, knots_spacing_type)
+        self._write_uf3_lammps_pot_files(
+            pot_dir=directory,
+            uf3_lammps_pot_name=filename,
+            author=author,
+            lammps_units=units,
+            knots_spacing_type=knots_spacing_type
+        )
 
-        # Create the pair_style and pair_coeff lines for LAMMPS
-        lines = "pair_style\tuf3 %i %i" % (self.bspline_config.degree, len(self.chemical_system.element_list))
-        lines += "\n"
-        lines += "pair_coeff\t* * " + full_path + " "
-        lines += " ".join(self.chemical_system.element_list)
+        # Example lines for LAMMPS
+        pair_style_line = f"pair_style uf3 {self.bspline_config.degree} {len(self.chemical_system.element_list)}"
+        pair_coeff_line = f"pair_coeff * * {full_path} " + " ".join(self.chemical_system.element_list)
 
 
-    def _write_uf3_lammps_pot_files(self, full_path, author, lammps_units, knots_spacing_type):
-        """
-        Creates and writes UF3 LAMMPS potential files.
 
-        :param full_path: Full path to the potential file to be generated.
-        :param author: Author of the potential file.
-        :param lammps_units: LAMMPS units.
-        :param knots_spacing_type: Knot spacing type, 'uk' (uniform) or 'nk' (non-uniform).
-        """
+    def _write_uf3_lammps_pot_files(self, pot_dir, uf3_lammps_pot_name, author, lammps_units, knots_spacing_type):
         current_datetime = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         files = {}
 
-        # Process 2-body interactions
+        # Grab integer trims for 2B and 3B
+        leading_trim_2B = self.bspline_config.leading_trim.get(2, 0)
+        trailing_trim_2B = self.bspline_config.trailing_trim.get(2, 0)
+        leading_trim_3B = self.bspline_config.leading_trim.get(3, 0)
+        trailing_trim_3B = self.bspline_config.trailing_trim.get(3, 0)
+
+        # 2B
         for interaction in self.chemical_system.interactions_map[2]:
-            key = '_'.join(interaction)
-            files[key] = f"#UF3 POT UNITS: {lammps_units} DATE: {current_datetime} AUTHOR: {author} CITATION:\n"
-            files[key] += f"2B {interaction[0]} {interaction[1]} {self.bspline_config.leading_trim} {self.bspline_config.trailing_trim}"
-            files[key] += f" {knots_spacing_type}\n"
-            files[key] += str(self.bspline_config.r_max_map[interaction]) + " " + str(len(self.bspline_config.knots_map[interaction])) + "\n"
-            files[key] += " ".join(['{:.17g}'.format(v) for v in self.bspline_config.knots_map[interaction]]) + "\n"
-            files[key] += str(self.bspline_config.get_interaction_partitions()[0][interaction]) + "\n"
-            start_index = self.bspline_config.get_interaction_partitions()[1][interaction]
-            length = self.bspline_config.get_interaction_partitions()[0][interaction]
-            files[key] += " ".join(['{:.17g}'.format(v) for v in self.model.coefficients[start_index:start_index + length]]) + "\n"
+            key = "_".join(interaction)
+            files[key] = (
+                f"#UF3 POT UNITS: {lammps_units} DATE: {current_datetime} AUTHOR: {author} CITATION:\n"
+            )
+            files[key] += f"2B {interaction[0]} {interaction[1]} {leading_trim_2B} {trailing_trim_2B} "
+            if knots_spacing_type not in ["uk", "nk"]:
+                raise ValueError(f"Invalid knot spacing type: {knots_spacing_type}")
+            files[key] += knots_spacing_type + "\n"
+
+            rmax = self.bspline_config.r_max_map[interaction]
+            nknots = len(self.bspline_config.knots_map[interaction])
+            files[key] += f"{rmax} {nknots}\n"
+
+            knots = self.bspline_config.knots_map[interaction]
+            files[key] += " ".join(['{:.17g}'.format(v) for v in knots]) + "\n"
+
+            partitions = self.bspline_config.get_interaction_partitions()
+            num_basis = partitions[0][interaction]
+            start = partitions[1][interaction]
+            coeff_slice = self.model.coefficients[start:start + num_basis]
+            files[key] += str(num_basis) + "\n"
+            files[key] += " ".join(['{:.17g}'.format(v) for v in coeff_slice]) + "\n"
             files[key] += "#\n"
 
-        # Process 3-body interactions if they exist
+        # 3B
         if 3 in self.chemical_system.interactions_map:
             for interaction in self.chemical_system.interactions_map[3]:
-                key = '_'.join(interaction)
-                files[key] = f"#UF3 POT UNITS: {lammps_units} DATE: {current_datetime} AUTHOR: {author} CITATION:\n"
-                files[key] += f"3B {interaction[0]} {interaction[1]} {interaction[2]} {self.bspline_config.leading_trim} {self.bspline_config.trailing_trim}"
-                files[key] += f" {knots_spacing_type}\n"
-                files[key] += str(self.bspline_config.r_max_map[interaction][2]) + " " + str(self.bspline_config.r_max_map[interaction][1]) + " " + str(self.bspline_config.r_max_map[interaction][0]) + " "
-                files[key] += str(len(self.bspline_config.knots_map[interaction][2])) + " " + str(len(self.bspline_config.knots_map[interaction][1])) + " " + str(len(self.bspline_config.knots_map[interaction][0])) + "\n"
-                files[key] += " ".join(['{:.17g}'.format(v) for v in self.bspline_config.knots_map[interaction][2]]) + "\n"
-                files[key] += " ".join(['{:.17g}'.format(v) for v in self.bspline_config.knots_map[interaction][1]]) + "\n"
-                files[key] += " ".join(['{:.17g}'.format(v) for v in self.bspline_config.knots_map[interaction][0]]) + "\n"
-                solutions = least_squares.arrange_coefficients(self.model.coefficients, self.bspline_config)
-                decompressed = self.bspline_config.decompress_3B(solutions[(interaction[0], interaction[1], interaction[2])], (interaction[0], interaction[1], interaction[2]))
-                files[key] += str(decompressed.shape[0]) + " " + str(decompressed.shape[1]) + " " + str(decompressed.shape[2]) + "\n"
+                key = "_".join(interaction)
+                files[key] = (
+                    f"#UF3 POT UNITS: {lammps_units} DATE: {current_datetime} AUTHOR: {author} CITATION:\n"
+                )
+                files[key] += f"3B {interaction[0]} {interaction[1]} {interaction[2]} {leading_trim_3B} {trailing_trim_3B} "
+                if knots_spacing_type not in ["uk", "nk"]:
+                    raise ValueError(f"Invalid knot spacing type: {knots_spacing_type}")
+                files[key] += knots_spacing_type + "\n"
+
+                rmax2 = self.bspline_config.r_max_map[interaction][2]
+                rmax1 = self.bspline_config.r_max_map[interaction][1]
+                rmax0 = self.bspline_config.r_max_map[interaction][0]
+                nknots2 = len(self.bspline_config.knots_map[interaction][2])
+                nknots1 = len(self.bspline_config.knots_map[interaction][1])
+                nknots0 = len(self.bspline_config.knots_map[interaction][0])
+                files[key] += f"{rmax2} {rmax1} {rmax0} {nknots2} {nknots1} {nknots0}\n"
+
+                knots2 = self.bspline_config.knots_map[interaction][2]
+                knots1 = self.bspline_config.knots_map[interaction][1]
+                knots0 = self.bspline_config.knots_map[interaction][0]
+                files[key] += " ".join(['{:.17g}'.format(v) for v in knots2]) + "\n"
+                files[key] += " ".join(['{:.17g}'.format(v) for v in knots1]) + "\n"
+                files[key] += " ".join(['{:.17g}'.format(v) for v in knots0]) + "\n"
+
+                arranged = least_squares.arrange_coefficients(self.model.coefficients, self.bspline_config)
+                decompressed = self.bspline_config.decompress_3B(arranged[interaction], interaction)
+                files[key] += f"{decompressed.shape[0]} {decompressed.shape[1]} {decompressed.shape[2]}\n"
                 for i in range(decompressed.shape[0]):
                     for j in range(decompressed.shape[1]):
                         files[key] += ' '.join(map(str, decompressed[i, j])) + "\n"
                 files[key] += "#\n"
 
+        full_path = os.path.join(pot_dir, uf3_lammps_pot_name)
         with open(full_path, "w") as fp:
-            for k, v in files.items():
-                fp.write(v)
+            for content in files.values():
+                fp.write(content)

@@ -1,6 +1,5 @@
 import os
 from .Simulation import CompleteLammpsSimulation
-from .BaseRelaxationSimulation import *
 
 
 class DefectEnergySimulation(CompleteLammpsSimulation):

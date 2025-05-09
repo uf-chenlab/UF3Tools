@@ -277,12 +277,14 @@ class DFTDataParser:
             with open(thermal_yaml_file, "r") as f:
                 thermal_data = yaml.safe_load(f)
 
+            props = thermal_data.get("thermal_properties", [])
             data["thermal_properties"] = {
-                "temperatures": np.array(thermal_data["temperature"]),
-                "free_energy": np.array(thermal_data["free_energy"]),
-                "entropy": np.array(thermal_data["entropy"]),
-                "heat_capacity": np.array(thermal_data["heat_capacity"])
+                "temperatures": np.array([entry["temperature"] for entry in props]),
+                "free_energy": np.array([entry["free_energy"] for entry in props]),
+                "entropy": np.array([entry["entropy"] for entry in props]),
+                "heat_capacity": np.array([entry["heat_capacity"] for entry in props])
             }
+
 
         return data
     
