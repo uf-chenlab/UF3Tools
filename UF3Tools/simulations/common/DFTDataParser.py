@@ -162,6 +162,17 @@ class DFTDataParser:
                 elif "ebulk" in line:
                     dft_data["bulk_energy"] = float(line.split()[1].replace("−", "-"))
         return dft_data
+    def get_energy_per_atom(self, dft_path):
+        dft_data = {
+            'energy_per_atom': None,
+        }
+        with open(dft_path, 'r') as file:
+            lines = file.readlines()
+            for line in lines:
+                if "epa" in line:
+                    # Replace special minus sign with standard minus sign
+                    dft_data["energy_per_atom"] = float(line.split()[1].replace("−", "-"))
+        return dft_data
     def poscarToLAMMPS(self, poscar, outputFilename):
         """
         Converts a VASP POSCAR/CONTCAR file to a LAMMPS data file.

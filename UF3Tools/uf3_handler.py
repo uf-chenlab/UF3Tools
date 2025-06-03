@@ -13,6 +13,7 @@ from uf3.representation import bspline
 from uf3.representation import process
 from uf3.regression import least_squares
 from uf3.forcefield import calculator
+from scipy.linalg import svd
 from uf3.forcefield import lammps
 from uf3.util import parallel
 from uf3.util import plotting
@@ -923,31 +924,138 @@ class DataFilter:
         self.data = self.data.iloc[np.sort(closest_idx)]
 
         print(f"Filtered data length: {len(self.data)}")
-    def filter_farthest_point_subsample(self, max_samples, min_diff, column='energy_per_atom'):
+    import numpy as np
+
+    def filter_farthest_point_subsample(self, max_samples=100, min_diff=0.0, column='energy_per_atom'):
         """
-        Subsample using farthest point sampling on a single column (e.g., energy_per_atom).
+        Efficient farthest point sampling with optional early stopping based on min_diff.
         """
-        print(f"Current data length: {len(self.data)}")
+        print(f"Running FPS on '{column}' with max_samples={max_samples}, min_diff={min_diff}")
 
         if column not in self.data.columns:
-            print(f"Missing column: '{column}'")
+            print(f"Missing column: {column}")
             return
 
         values = self.data[column].values.astype(float)
-        values = values[:, np.newaxis]  # shape (N, 1)
+        if values.ndim == 1:
+            values = values[:, np.newaxis]
 
-        if (max_samples > 0) and (min_diff > 0):
-            if max_samples < 1:
-                max_samples = int(np.ceil(len(values) * max_samples))
-            subsamples = farthest_point_sampling(
-                values,
-                max_samples=max_samples,
-                min_diff=min_diff)
+        n_points = len(values)
+        if (max_samples >= n_points and min_diff == 0):
+            print("Requested samples >= dataset size. Returning full dataset.")
+            return
+
+        selected = [np.argmin(values[:, 0])]
+        distances = np.full(n_points, np.inf)
+
+        for _ in range(1, max_samples):
+            last_point = values[selected[-1]]
+            new_distances = np.linalg.norm(values - last_point, axis=1)
+            distances = np.minimum(distances, new_distances)
+
+            # Select the point with the farthest minimum distance
+            max_dist = distances.max()
+            if min_diff > 0 and max_dist < min_diff:
+                print(f"Early stopping at {_} samples due to min_diff = {min_diff}")
+                break
+
+            next_idx = distances.argmax()
+            selected.append(next_idx)
+
+        self.data = self.data.iloc[np.sort(selected)]
+        print(f"Subsampled to {len(self.data)} points using efficient FPS.")
+    def filter_cur_subsample(self, n_samples, columns=None, rank=None):
+        """
+        Subsample data using CUR decomposition by selecting rows with high statistical leverage scores.
+
+        Parameters:
+        - n_samples: The number of samples to select.
+        - columns: A list of column names to consider for the CUR decomposition.
+                   If None, all numerical columns will be used.
+        - rank: The rank 'k' to use for computing leverage scores. If None, it will be
+                set to n_samples or a reasonable fraction of the data dimension.
+        """
+        print(f"Current data length: {len(self.data)}")
+        print(self.data.columns)
+        print(self.data)
+
+        if n_samples >= len(self.data):
+            print("Requested sample count >= dataset size. Skipping CUR subsampling.")
+            return
+
+        # Prepare the data matrix for SVD
+        print(set(columns))
+        if columns is None:
+            temp_df = self.data.select_dtypes(include=np.number).copy()
+        
         else:
-            subsamples = np.arange(len(values))
+            if set(columns) <= {'fx', 'fy', 'fz'}:
+                mask = self.data[columns].applymap(lambda x: isinstance(x, (list, np.ndarray)) and x is not None)
+                valid_rows = mask.all(axis=1)
+                filtered_df = self.data.loc[valid_rows]
+                
+                if filtered_df.empty:
+                    print("No valid rows with force arrays for CUR subsampling.")
+                    return
 
-        self.data = self.data.iloc[np.sort(subsamples)]
-        print(f"Filtered data length: {len(self.data)}")  
+                def flatten_row(row):
+                    return np.concatenate([np.array(row[col], dtype=np.float64) for col in columns])
+                
+                X = np.vstack(filtered_df.apply(flatten_row, axis=1).values)
+                current_indices = filtered_df.index
+
+            else:
+                # Regular numeric columns
+                print(self.data[columns])
+                temp_df = self.data[columns].apply(pd.to_numeric, errors='coerce')
+                print(temp_df)
+                if temp_df.empty:
+                    print("No data remaining after dropping NaNs for CUR subsampling.")
+                    return
+                X = temp_df.to_numpy(dtype=np.float64)
+                current_indices = temp_df.index
+        
+        if X.shape[0] == 0 or X.shape[1] == 0:
+            print("No valid numerical data for CUR subsampling.")
+            return
+
+        # Handle potential NaNs by filling with 0 or a mean, or dropping rows/columns
+        # For simplicity, let's drop rows with NaNs for now if not already handled
+    
+        # Perform SVD
+        # U contains the left singular vectors (for row leverage scores)
+        U, s, Vt = svd(X, full_matrices=False)
+
+        # Determine the rank k for leverage scores
+        if rank is None:
+            # Common heuristics: min(n_samples, small_constant * min(rows, cols))
+            # Let's use min(n_samples, min(U.shape)) to ensure it's within bounds
+            k = min(n_samples, 10 * min(U.shape[0], U.shape[1]))
+            if k == 0:
+                print("Effective rank for SVD is zero. Cannot perform CUR subsampling.")
+                return
+        else:
+            k = min(rank, U.shape[1])
+            if k == 0:
+                print("Specified rank for SVD is zero. Cannot perform CUR subsampling.")
+                return
+
+        # Calculate row leverage scores
+        # Leverage scores are the squared Euclidean norms of the rows of U up to rank k
+        leverage_scores = np.sum(U[:, :k]**2, axis=1)
+
+        # Select indices corresponding to the top n_samples leverage scores
+        # We use argsort and then slice the last n_samples (highest scores)
+        if 'current_indices' in locals(): # if NaNs were handled
+            selected_indices_in_temp_df = np.argsort(leverage_scores)[-n_samples:]
+            selected_original_indices = current_indices[selected_indices_in_temp_df]
+            self.data = self.data.loc[selected_original_indices]
+        else:
+            selected_indices = np.argsort(leverage_scores)[-n_samples:]
+            self.data = self.data.iloc[selected_indices]
+
+        print(f"Filtered data length after CUR subsampling: {len(self.data)}")
+
 
 class Featurizer:
     def __init__(self, data, chemical_system, bspline_config):
@@ -1229,6 +1337,12 @@ class ModelTrainer:
         Train the model using multiple files.
         """
         self.model.fit_from_files_parallel(filenames, self.train_keys, weight=weight, batch_size=batch_size, energy_key='energy', num_cores=num_cores, progress='bar', sample_weights=sample_weights)
+    def load_fitting_data(self, filenames, num_cores=1, use_cur=False):
+        return self.model.load_tables_parallel(filenames=filenames, subset=self.train_keys, num_cores=num_cores, progress='bar', use_cur=use_cur)
+    def fit_from_dataframe(self, df, weight=0.3, batch_size=500, num_cores=1, sample_weights=None):
+        self.model.fit_from_dataframe_parallel(df, self.train_keys, weight=weight, batch_size=batch_size, energy_key='energy', num_cores=num_cores, progress='bar', sample_weights=sample_weights)
+    def fit_by_interaction(self, interaction, filenames, weight=0.3, batch_size=500, num_cores=1, sample_weights=None):
+        self.model.fit_by_interaction(filenames, self.train_keys, target_interactions=interaction, weight=weight, batch_size=batch_size, energy_key='energy', num_cores=num_cores, progress='bar', sample_weights=sample_weights)
     def export_model(self, filename):
         """
         Export the model to a file.
@@ -1661,6 +1775,8 @@ class ModelAnalyzer:
         ax[1].set_xlabel("DFT Force (eV/A)")
         ax[1].set_ylabel("Predicted Force (eV/A)")
         ax[1].set_title("Force Parity Plot")
+        ax[1].set_xlim(-8, 8)
+        ax[1].set_ylim(-8, 8)
 
         plt.tight_layout()
         plt.show()

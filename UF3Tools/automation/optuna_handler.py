@@ -39,8 +39,7 @@ def worker_init_once(
     bspline_config,
     degree,
     ignore_list,
-    settings,
-    train_test_split=0.01
+    settings
 ):
     """
     This function is called ONCE per Dask worker to load 
@@ -89,12 +88,14 @@ def worker_init_once(
 
     automater.set_ignore_list(ignore_list)
 
-    # Potentially big data loads happen here
     automater.load_existing_base_data()
     automater.load_existing_features()
     automater.load_filtered_data()
     automater.consolidate_data()
-    automater.split_data(train_test_split, settings['unique_indices'], settings['unique_indices']) # e.g. 99% train, 1% test
+    if settings['testing_sets'] is not None:
+        automater.select_testing_set(settings['testing_sets'], include_in_training=False, test_split_fraction=settings['train_test_split'], seed=42)
+    else:
+        automater.split_data(settings['train_test_split'], settings['unique_indices'], settings['unique_indices'])
     automater.set_dft_validation_structures(settings['testing_mp_structures'])
     automater.set_lammps_validation_structures(settings['testing_mp_structures'])
     
@@ -110,6 +111,7 @@ def worker_init_once(
             automater.set_single_crystal_validation_structures(settings['formation_energy_structures'])
         else:
             raise ValueError("formation_energy_structures not provided in settings")
+    automater.load_fitting_data(automater.get_training_set(), automater.get_testing_set(), batch_size=settings['batch_size'], num_cores=settings['cores_per_job'])
     
     return f"Data loaded on {worker_hostname}"
 
@@ -141,6 +143,7 @@ def loss_function(avg_result, normalized_error, acceptable_errors, weights):
     phonopy_fe = avg_result.get('free_energy', 0.0)
     phonopy_entropy = avg_result.get('entropy', 0.0)
     phonopy_heat_capacity = avg_result.get('heat_capacity', 0.0)
+    energy_per_atom = avg_result.get('energy_per_atom', 0.0)
     
     
     # Normalize errors by acceptable thresholds
@@ -156,6 +159,7 @@ def loss_function(avg_result, normalized_error, acceptable_errors, weights):
     norm_phonopy_fe = abs(phonopy_fe) / acceptable_errors.get('phonopy_free_energy', 1.0)
     norm_phonopy_entropy = abs(phonopy_entropy) / acceptable_errors.get('phonopy_entropy', 1.0)
     norm_phonopy_heat_capacity = abs(phonopy_heat_capacity) / acceptable_errors.get('phonopy_heat_capacity', 1.0)
+    norm_energy_per_atom = abs(energy_per_atom) / acceptable_errors.get('energy_per_atom', 1.0)
     
     # Weights (adjustable for importance)
     weight_cohesive = weights.get('cohesive_energy', 0.0)
@@ -170,6 +174,7 @@ def loss_function(avg_result, normalized_error, acceptable_errors, weights):
     weight_phonopy_fe = weights.get('phonopy_free_energy', 0.0)
     weight_phonopy_entropy = weights.get('phonopy_entropy', 0.0)
     weight_phonopy_heat_capacity = weights.get('phonopy_heat_capacity', 0.0)
+    weight_energy_per_atom = weights.get('energy_per_atom', 0.0)
     # Calculate loss with normalized errors
     loss = (
         weight_cohesive * norm_cohesive +
@@ -183,7 +188,8 @@ def loss_function(avg_result, normalized_error, acceptable_errors, weights):
         weight_phonopy_band * norm_phonopy_band + 
         weight_phonopy_fe * norm_phonopy_fe +
         weight_phonopy_entropy * norm_phonopy_entropy +
-        weight_phonopy_heat_capacity * norm_phonopy_heat_capacity
+        weight_phonopy_heat_capacity * norm_phonopy_heat_capacity + 
+        weight_energy_per_atom * norm_energy_per_atom
     )
     return loss
 def parse_validation_data(validation_data, normalized_error, acceptable_errors, weights):
@@ -280,7 +286,7 @@ def train_with_preloaded_data(params, settings, trial_id=0):
 
     try:
         # Train the model in parallel with some # of cores (optional)
-        chemical_system, trainer_model, bspline_config, features, _ = automater.train_model_parallel(
+        chemical_system, trainer_model, bspline_config, _, _ = automater.train_model_from_df(
             model_filename=model_filename,
             training_data=automater.get_training_set(),
             testing_data=automater.get_testing_set(),
@@ -288,7 +294,7 @@ def train_with_preloaded_data(params, settings, trial_id=0):
             weight=weight,
             batch_size=settings['batch_size'],
             num_cores=settings['cores_per_job'],
-            sample_weights=settings['sample_weights']
+            sample_weights=settings['sample_weights'],
         )
     except Exception as exc:
         return None, f"Training failed: {exc}"
@@ -300,7 +306,7 @@ def train_with_preloaded_data(params, settings, trial_id=0):
         bspline_config, 
         automater.get_training_set(),
         automater.get_testing_set(),
-        features,
+        automater.get_fitting_features(),
         dft_validation_folder = settings.get('dft_validation_folder', None),
     )
 
@@ -417,7 +423,7 @@ def objective(trial, client, settings):
 
     return loss
 
-
+from dask import config
 def run_optuna_tpe_with_dask_hpc(
     automater,
     settings,
@@ -438,6 +444,12 @@ def run_optuna_tpe_with_dask_hpc(
     }
     settings.update(automater_params)
     settings.update(job_params)
+    import dask
+
+    dask.config.set({
+        "distributed.scheduler.worker-ttl": "600 minutes",
+        "distributed.client.heartbeat": "60s"
+    })
     # 1) Create the SLURM cluster
     cluster = SLURMCluster(
         account=job_params['account'],
@@ -446,14 +458,22 @@ def run_optuna_tpe_with_dask_hpc(
         memory=job_params['memory'],
         walltime=job_params['walltime'],
         job_extra=job_params['extra'],
-        log_directory=automater.get_base_directory()
+        log_directory=automater.get_base_directory(),
     )
-    cluster.scale(n_workers)
-
+    
+    
 
     # 2) Create the client
-    client = Client(cluster)
-    
+    client = Client(cluster, heartbeat_interval=30000, timeout=9999999999)
+    def show_worker_config():
+        
+        return dask.config.get("distributed.scheduler.worker-ttl")
+
+    worker_configs = client.run(show_worker_config)
+    print(worker_configs)
+    cluster.scale(n_workers)
+    print(dask.config.config)
+
     client.wait_for_workers(n_workers)
     print("[INFO] Dask dashboard:", client.dashboard_link)
     # 3) Initialize data on each worker once
@@ -466,7 +486,6 @@ def run_optuna_tpe_with_dask_hpc(
         automater.get_degree(),
         automater.get_ignore_list(),
         settings,
-        train_test_split=0.01  # or your desired ratio
     )
     # .run() returns a dict {worker_address: return_value}
     if not init_future or any(val is None for val in init_future.values()):

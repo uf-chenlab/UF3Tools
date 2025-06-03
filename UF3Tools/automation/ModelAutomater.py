@@ -65,6 +65,8 @@ class ModelAutomater:
             'unreasonable_epas': 'filter_unreasonable_epas',
             'gas': 'filter_gas',
             'subsample':'filter_kmeans_subsample',
+            'uf3_subsample':'filter_farthest_point_subsample',
+            'cur_subsample': 'filter_cur_subsample',
             'none': 'get_data'
             # Add new filters here as needed
         }
@@ -116,6 +118,16 @@ class ModelAutomater:
         self.dft_validation_structures = None
         self.lammps_validation_structures = None
         self.single_crystal_validation_structures = None
+        self.fitting_df = None
+        self.fitting_features = None
+    def set_fitting_df(self, fitting_df):
+        self.fitting_df = fitting_df
+    def get_fitting_df(self):
+        return self.fitting_df
+    def set_fitting_features(self, fitting_features):
+        self.fitting_features = fitting_features
+    def get_fitting_features(self):
+        return self.fitting_features
     def set_dft_validation_structures(self, validation_structures):
         self.dft_validation_structures = validation_structures
     def get_dft_validation_structures(self):
@@ -618,7 +630,7 @@ class ModelAutomater:
             
             self.filtered_data_frames[label] = data
             self.filtered_data_labels.append(label)
-    def consolidate_data(self):
+    def consolidate_data_return(self):
         """
         Consolidate all data into a single DataFrame for training/testing, ignoring data types in data_ignore_list.
         """
@@ -628,11 +640,18 @@ class ModelAutomater:
             data_type = label.replace('.pkl', '').replace('_filtered', '').replace('_rebalanced', '')
             if data_type in self.data_ignore_list:
                 continue
+            data = data.copy()
+            data["source_dataset"] = data_type
             print(f"adding {data_type} data with length {len(data)}")
             consolidated_data = pd.concat([consolidated_data, data], ignore_index=False)
         print(f"Consolidated data length: {len(consolidated_data)}")
-        #self.clear_memory()
-        self.model_data = consolidated_data
+        return consolidated_data
+    def consolidate_data(self):
+        """
+        Consolidate all data into a single DataFrame for training/testing, ignoring data types in data_ignore_list.
+        """
+        self.model_data = pd.DataFrame()
+        self.model_data = self.consolidate_data_return()
     def get_unique_indices(self, data):
         """
         Get the unique indices in the DataFrame.
@@ -640,47 +659,88 @@ class ModelAutomater:
         :return: List of unique indices.
         """
         return data.index.to_series().apply(lambda x: x.lower().split('_run')[0]).unique()
-    def split_data(self, test_percent=0.2, filter_index=True, unique_indices=True):
-        """
-        Split the data into training and testing sets.
+    def split_data(self, test_percent=0.2, filter_index=True, unique_indices=True, exclude_list=None):
+        if exclude_list:
+            pre_filter_len = len(self.model_data)
+            self.model_data = self.model_data[~self.model_data["source_dataset"].isin(exclude_list)]
+            print(f"Excluded datasets: {exclude_list} — removed {pre_filter_len - len(self.model_data)} rows")
 
-        Parameters:
-        - test_percent: Fraction of data to use for testing.
-        - filter_index: Boolean flag to determine whether or not to require indices
-        to be fully in either train or test.
-        """
-
-        # Get unique index prefixes
-        if unique_indices == True:
+        if unique_indices:
             index_prefixes = self.get_unique_indices(self.model_data)
-        else: 
+        else:
             index_prefixes = self.model_data.index.to_series()
 
-        np.random.seed(42)  # for reproducibility
+        np.random.seed(42)
         num_indices_to_select = int(test_percent * len(index_prefixes))
         selected_prefixes = np.random.choice(index_prefixes, num_indices_to_select, replace=False)
 
         if filter_index:
-            # Filter data for testing set based on the selected prefixes
-            self.testing_set = self.model_data[self.model_data.index.to_series().apply(
-                lambda x: x.lower().split('_run')[0]).isin(selected_prefixes)]
-            self.test_keys = self.testing_set.index
-
-            # Filter data for training set
-            self.training_set = self.model_data[~self.model_data.index.isin(self.testing_set.index)]
+            test_mask = self.model_data.index.to_series().apply(
+                lambda x: x.lower().split('_run')[0]
+            ).isin(selected_prefixes)
+            self.testing_set = self.model_data[test_mask]
+            self.training_set = self.model_data[~test_mask]
         else:
-            # Randomly shuffle and split the data without filtering based on the index prefixes
             shuffled_data = self.model_data.sample(frac=1, random_state=42)
             split_point = int(len(shuffled_data) * (1 - test_percent))
             self.training_set = shuffled_data.iloc[:split_point]
             self.testing_set = shuffled_data.iloc[split_point:]
 
-        # Store the indices for training and testing sets
         self.train_keys = self.training_set.index
         self.test_keys = self.testing_set.index
 
         print(f"Training set length: {len(self.training_set)}. Testing set length: {len(self.testing_set)}")
         return self.training_set, self.testing_set
+    def select_testing_set(self, test_dataset_names, include_in_training=False, test_split_fraction=None, seed=42069):
+        """
+        Set specific datasets (by name) as the testing set. Optionally include them in training.
+
+        Parameters:
+        - test_dataset_names (list[str]): Dataset names like 'aln_polytypes'
+        - include_in_training (bool): If True, also include testing data in the training set
+        - test_split_fraction (float or None): If given, randomly split each dataset with this fraction for testing
+        - seed (int): Random seed for reproducibility
+        """
+        np.random.seed(seed)
+        all_test_indices = set()
+        all_train_indices = set()
+
+        for name in test_dataset_names:
+            label = f"{name}_filtered.pkl"
+            if label not in self.filtered_data_frames:
+                raise ValueError(f"Dataset {label} not found in filtered_data_frames.")
+
+            df = self.filtered_data_frames[label]
+
+            if test_split_fraction is not None:
+                # Random split
+                indices = df.index.to_numpy()
+                np.random.shuffle(indices)
+                split_idx = int(len(indices) * (1 - test_split_fraction))
+                train_idx = indices[:split_idx]
+                test_idx = indices[split_idx:]
+                all_train_indices.update(train_idx)
+                all_test_indices.update(test_idx)
+            else:
+                # Entire dataset goes to test set
+                all_test_indices.update(df.index)
+
+        self.testing_set = self.model_data[self.model_data.index.isin(all_test_indices)]
+        self.test_keys = self.testing_set.index
+
+        if include_in_training:
+            self.training_set = self.model_data
+        else:
+            if test_split_fraction is not None:
+                combined_train_indices = set(self.model_data.index) - (all_test_indices - all_train_indices)
+            else:
+                combined_train_indices = set(self.model_data.index) - all_test_indices
+            self.training_set = self.model_data[self.model_data.index.isin(combined_train_indices)]
+
+        self.train_keys = self.training_set.index
+        print(f"Testing set size: {len(self.testing_set)}, Training set size: {len(self.training_set)}")
+        return self.training_set, self.testing_set
+
     def set_training_data(self, data):
         self.training_set = data
         self.train_keys = data.index
@@ -783,6 +843,33 @@ class ModelAutomater:
         trainer.export_model(model_filename)
         #analyzer = ModelAnalyzer(self.chemical_system, trainer.get_model(), trainer.get_bspline_config(), training_data, structure, structure_feature)
         return self.chemical_system, trainer.get_model(), trainer.get_bspline_config(), features, model_filename
+    def load_fitting_data(self, training_data, testing_data, batch_size=500, num_cores=1, use_cur=False):
+        features = []
+        for key in self.feature_paths:
+            #remove .pkl from the key
+            data_type = key.replace('.pkl', '')
+            if(data_type in self.data_ignore_list):
+                continue
+            features.append(self.feature_paths[key])
+        regularizer =  dict(ridge_1b=1e-6,
+                ridge_2b=1e-4,
+                ridge_3b=1e-4,
+                curvature_2b=1e-4,
+                curvature_3b=1e-4)
+        trainer = ModelTrainer(self.model_data, self.chemical_system, self.bspline_config, regularizer)
+        trainer.set_training_set(training_data)
+        trainer.set_testing_set(testing_data)
+        self.fitting_df = trainer.load_fitting_data(features, num_cores=num_cores, use_cur=use_cur)
+        self.fitting_features = features
+        return self.chemical_system, self.fitting_df, trainer.get_bspline_config(), features
+    def train_model_from_df(self, model_filename, training_data, testing_data, regularizer, weight=0.3, batch_size=500, num_cores=1, sample_weights=None):
+        sample_weights_final = self.fill_sample_weights(sample_weights)
+        trainer = ModelTrainer(self.model_data, self.chemical_system, self.bspline_config, regularizer)
+        trainer.set_training_set(training_data)
+        trainer.set_testing_set(testing_data)
+        trainer.fit_from_dataframe(self.fitting_df, weight=weight, batch_size=batch_size, num_cores=num_cores,sample_weights=sample_weights_final if sample_weights is not None else None)
+        trainer.export_model(model_filename)
+        return self.chemical_system, trainer.get_model(), trainer.get_bspline_config(), None, model_filename
     def train_model_multistep(self, model_filename, training_data, testing_data, regularizer, weight=0.3, batch_size=500):
         """
         Train a model using the given data.

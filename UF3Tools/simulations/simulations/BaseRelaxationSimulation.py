@@ -13,7 +13,7 @@ class BaseRelaxationSimulation(BaseSimulation):
             'y_boundary': 'p',
             'z_boundary': 'p',
             'change_box': '',
-            'uf3_degree': '2',
+            'uf3_degree': '3',
             'box_relax_settings': 'fix 1 all box/relax iso 0.0 vmax 0.001',
             'min_style': 'cg',
             'etol': '1e-25',
@@ -45,7 +45,7 @@ class BaseRelaxationSimulation(BaseSimulation):
         lattice_file_path = os.path.join(self.simulation_directory, "lattice.txt")
         pattern = r'a:\s*([\d.]+)\s*b:\s*([\d.]+)\s*c:\s*([\d.]+)\s*alpha:\s*([\d.]+)\s*beta:\s*([\d.]+)\s*gamma:\s*([\d.]+)'
         match = self.read_result_file(lattice_file_path, pattern)
-        if match:
+        if match is not None:
             self.result['lattice_constant'] = {
                 key: float(match.group(i + 1))
                 for i, key in enumerate(['a', 'b', 'c', 'alpha', 'beta', 'gamma'])
@@ -58,7 +58,7 @@ class BaseRelaxationSimulation(BaseSimulation):
         energy_file_path = os.path.join(self.simulation_directory, "energy.txt")
         pattern = r'ecoh\s*=\s*([-.\d]+)'
         match = self.read_result_file(energy_file_path, pattern)
-        if match:
+        if match is not None:
             ecoh = float(match.group(1))
             self.result['cohesive_energy'] = ecoh
             self.result['energy_per_atom'] = ecoh
@@ -71,7 +71,7 @@ class BaseRelaxationSimulation(BaseSimulation):
         energy_file_path = os.path.join(self.simulation_directory, "total_energy.txt")
         pattern = r'total\s*energy\s*=\s*([-.\d]+)'
         match = self.read_result_file(energy_file_path, pattern)
-        self.result['bulk_energy'] = float(match.group(1)) if match else None
+        self.result['bulk_energy'] = float(match.group(1)) if match is not None else None
         return self.result['bulk_energy']
 
     def _read_num_atoms(self):

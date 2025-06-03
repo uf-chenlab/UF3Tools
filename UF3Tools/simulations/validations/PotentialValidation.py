@@ -91,7 +91,7 @@ class PotentialValidation:
                     dft_value = self.dft_data.get(key)
                     lammps_value = self.lammps_results[key]
 
-                    if dft_value is not None and dft_value != 0:
+                    if (dft_value is not None and dft_value != 0) and (lammps_value is not None):
                         percent_error[key] = self.calculate_percent_error(dft_value, lammps_value)
                     else:
                         percent_error[key] = None
