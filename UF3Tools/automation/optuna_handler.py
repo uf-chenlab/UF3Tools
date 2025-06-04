@@ -95,7 +95,7 @@ def worker_init_once(
     if settings['testing_sets'] is not None:
         automater.select_testing_set(settings['testing_sets'], include_in_training=False, test_split_fraction=settings['train_test_split'], seed=42)
     else:
-        automater.split_data(settings['train_test_split'], settings['unique_indices'], settings['unique_indices'])
+        automater.split_data(settings['train_test_split'], settings['unique_indices'], settings['unique_indices'], settings['excluded_testing_sets'])
     automater.set_dft_validation_structures(settings['testing_mp_structures'])
     automater.set_lammps_validation_structures(settings['testing_mp_structures'])
     
@@ -295,6 +295,7 @@ def train_with_preloaded_data(params, settings, trial_id=0):
             batch_size=settings['batch_size'],
             num_cores=settings['cores_per_job'],
             sample_weights=settings['sample_weights'],
+            exclude_elements=settings['excluded_testing_elements'],
         )
     except Exception as exc:
         return None, f"Training failed: {exc}"
@@ -318,10 +319,11 @@ def train_with_preloaded_data(params, settings, trial_id=0):
     for pair in chemical_system.interactions_map[2]:
         analyzer.fix_repulsion_2b(pair=pair, r_target=1.0, min_curvature=50.0)
     normalized_error=0
+    result = None
     if(settings['loss_weights']['error'] == 0):
         normalized_error = 0
     else:
-        result = analyzer.test_model_prediction(training=False)
+        result = analyzer.test_model_prediction(training=False, use_elements=settings['element_list'],)
         normalized_error= 0.5*((result['rmse_e']/result['sigma_e']) + (result['rmse_f']/result['sigma_f']))
     
 
@@ -341,13 +343,24 @@ def train_with_preloaded_data(params, settings, trial_id=0):
     if settings['loss_weights']['error'] == 0:
         rmse = False
     else:
-        rmse = True
+        rmse = False #debug 
     try:
         validation_data = validate_potential_with_timeout(
             analyzer, potential_label, potential_file, 
             settings['element_list'], rmse, settings['validations_to_run'], settings['relative_orders'], timeout=7200
         )
         print("validation data: ", validation_data)
+        if isinstance(validation_data, list):
+            for valid in validation_data:
+                if valid is not None and result is not None:
+                    valid.set_normalized_error(normalized_error)
+                    valid.set_force_rmse(result['rmse_f'])
+                    valid.set_energy_rmse(result['rmse_e'])
+        else:
+            if result is not None:
+                validation_data.set_normalized_error(normalized_error)
+                validation_data.set_force_rmse(result['rmse_f'])
+                validation_data.set_energy_rmse(result['rmse_e'])
         if(validation_data is None):
             print("validation data is none! timed out")
             return None, 999  # Assigning high loss

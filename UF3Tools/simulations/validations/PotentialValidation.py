@@ -131,6 +131,8 @@ class ValidationData:
         self.lammps_data = {}
         self.relative_order_results = {}
         self.normalized_error = None
+        self.energy_rmse = None
+        self.force_rmse = None  
 
         # Storing raw data separately
         self.raw_lammps_data = {}
@@ -167,6 +169,14 @@ class ValidationData:
 
     def get_normalized_error(self):
         return self.normalized_error
+    def set_force_rmse(self, force_rmse):
+        self.force_rmse = force_rmse    
+    def get_force_rmse(self):
+        return self.force_rmse
+    def set_energy_rmse(self, energy_rmse):
+        self.energy_rmse = energy_rmse
+    def get_energy_rmse(self):
+        return self.energy_rmse
 
     def set_lammps_validation_results(self, lammps_data):
         self.lammps_data = lammps_data
@@ -187,6 +197,8 @@ class ValidationData:
         output = f"Potential version: {self.potential_version}\n"
         output += f"Structure: {self.structure}\n"
         output += f"Normalized error: {self.normalized_error}\n"
+        output += f"Force RMSE: {self.force_rmse}\n"
+        output += f"Energy RMSE: {self.energy_rmse}\n"
         output += f"Relative Order: {self.relative_order_results}\n"
         for validation_type, validation_results in self.validation_data.items():
             output += f"{validation_type} validation results:\n"

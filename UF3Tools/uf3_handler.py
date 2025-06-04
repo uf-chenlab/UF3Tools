@@ -3,6 +3,7 @@ import os
 import pandas as pd
 from UF3Tools.simulations.managers.ValidationManager import ValidationManager, SingleCrystalValidationManager
 from sklearn.cluster import MiniBatchKMeans
+from UF3Tools.common.UF3Utility import *
 from sklearn.metrics import pairwise_distances_argmin_min
 import numpy as np
 import matplotlib.pyplot as plt
@@ -1123,7 +1124,7 @@ class Featurizer:
         """
         Get the list of elements in the chemical system.
         """
-        return self.chemical_system.elements
+        return self.chemical_system.element_list
     
     def featurize_data(self, num_cores, output_filename, batch_size=500):
         """
@@ -1227,7 +1228,7 @@ class ModelTrainer:
         """
         Get the list of elements in the chemical system.
         """
-        return self.chemical_system.elements
+        return self.chemical_system.element_list
     def get_unique_indices(self):
         """
         Get the unique indices in the DataFrame.
@@ -1339,8 +1340,8 @@ class ModelTrainer:
         self.model.fit_from_files_parallel(filenames, self.train_keys, weight=weight, batch_size=batch_size, energy_key='energy', num_cores=num_cores, progress='bar', sample_weights=sample_weights)
     def load_fitting_data(self, filenames, num_cores=1, use_cur=False):
         return self.model.load_tables_parallel(filenames=filenames, subset=self.train_keys, num_cores=num_cores, progress='bar', use_cur=use_cur)
-    def fit_from_dataframe(self, df, weight=0.3, batch_size=500, num_cores=1, sample_weights=None):
-        self.model.fit_from_dataframe_parallel(df, self.train_keys, weight=weight, batch_size=batch_size, energy_key='energy', num_cores=num_cores, progress='bar', sample_weights=sample_weights)
+    def fit_from_dataframe(self, df, weight=0.3, batch_size=500, num_cores=1, sample_weights=None, exclude_elements=None):
+        self.model.fit_from_dataframe_parallel(df, self.train_keys, weight=weight, batch_size=batch_size, energy_key='energy', num_cores=num_cores, progress='bar', sample_weights=sample_weights, exclude_elements=exclude_elements)
     def fit_by_interaction(self, interaction, filenames, weight=0.3, batch_size=500, num_cores=1, sample_weights=None):
         self.model.fit_by_interaction(filenames, self.train_keys, target_interactions=interaction, weight=weight, batch_size=batch_size, energy_key='energy', num_cores=num_cores, progress='bar', sample_weights=sample_weights)
     def export_model(self, filename):
@@ -1618,7 +1619,7 @@ class ModelAnalyzer:
         for element_list in self.chemical_system.interactions_map[3]:
             self.analyze_3b(element_list, self.model)
         self.generate_density_plot(analysis)
-        results= self.test_model_prediction(training = training)
+        results= self.test_model_prediction(training = training, use_elements= self.chemical_system.element_list)
         #results = self.export_prediction_data_to_dataframe()
         self.generate_parity_plots()
         return results
@@ -1662,16 +1663,16 @@ class ModelAnalyzer:
         plot.show()
             
         
-    def test_model_prediction(self, training=False):
+    def test_model_prediction(self, training=False, drop_columns=None, use_elements = None):
         """
         Test the model prediction.
         """
         keys = self.testing_keys if training is False else self.training_keys
         
         if(len(self.feature_filenames) > 1):
-            y_e, p_e, y_f, p_f, rmse_e, rmse_f, ids, force_ids = self.model.batched_predict_multiple_files(self.feature_filenames, keys=keys)
+            y_e, p_e, y_f, p_f, rmse_e, rmse_f, ids, force_ids = self.model.batched_predict_multiple_files(self.feature_filenames, keys=keys, drop_columns=drop_columns, use_elements = use_elements)
         else:
-            y_e, p_e, y_f, p_f, rmse_e, rmse_f, ids, force_ids = self.model.batched_predict(self.feature_filenames[0], keys=keys)
+            y_e, p_e, y_f, p_f, rmse_e, rmse_f, ids, force_ids = self.model.batched_predict(self.feature_filenames[0], keys=keys, drop_columns=drop_columns, use_elements=use_elements)
 
         sigma_e = np.std(y_e, ddof=1)  # Standard deviation of energy
         sigma_f = np.std(y_f, ddof=1)  # Standard deviation of force
@@ -1992,7 +1993,10 @@ class ModelAnalyzer:
             print("validation manager finishesd")
             if rmse == True:
                 print("calculating normalized error")
-                normalized_error = self.calculate_normalized_error(self.test_model_prediction())
+                prediction_data = self.test_model_prediction(use_elements=element_list)
+                data.set_force_rmse(prediction_data["rmse_f"])
+                data.set_energy_rmse(prediction_data["rmse_e"])
+                normalized_error = self.calculate_normalized_error(prediction_data)
             else:
                 normalized_error = None
             data.set_normalized_error(normalized_error)
@@ -2045,10 +2049,14 @@ class ModelAnalyzer:
                 lammps_results = {}
 
                 for data in datas:
+                    print("relative order data")
+                    print(data)
                     validation_results = data.get_lammps_validation_results()
+                    print("relative order validation_results:")
+                    print(validation_results)
                     if validation in validation_results:
                         lammps_results[data.get_structure_id()] = validation_results[validation][validation]
-                        print("Validation data:", validation_results[validation][validation])
+                        print("relative order Validation data:", validation_results[validation][validation])
 
                 # Sort structure IDs based on LAMMPS energy values (ascending order)
                 sorted_lammps = sorted(lammps_results, key=lammps_results.get)

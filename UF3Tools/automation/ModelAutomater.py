@@ -660,37 +660,45 @@ class ModelAutomater:
         """
         return data.index.to_series().apply(lambda x: x.lower().split('_run')[0]).unique()
     def split_data(self, test_percent=0.2, filter_index=True, unique_indices=True, exclude_list=None):
+        # Separate excluded data first
         if exclude_list:
-            pre_filter_len = len(self.model_data)
-            self.model_data = self.model_data[~self.model_data["source_dataset"].isin(exclude_list)]
-            print(f"Excluded datasets: {exclude_list} — removed {pre_filter_len - len(self.model_data)} rows")
+            excluded_data = self.model_data[self.model_data["source_dataset"].isin(exclude_list)]
+            included_data = self.model_data[~self.model_data["source_dataset"].isin(exclude_list)]
+            print(f"Excluded from test split: {exclude_list} — {len(excluded_data)} rows")
+        else:
+            excluded_data = pd.DataFrame(columns=self.model_data.columns)
+            included_data = self.model_data
 
         if unique_indices:
-            index_prefixes = self.get_unique_indices(self.model_data)
+            index_prefixes = included_data.index.to_series().apply(lambda x: x.lower().split('_run')[0]).unique()
         else:
-            index_prefixes = self.model_data.index.to_series()
+            index_prefixes = included_data.index.to_series()
 
         np.random.seed(42)
         num_indices_to_select = int(test_percent * len(index_prefixes))
         selected_prefixes = np.random.choice(index_prefixes, num_indices_to_select, replace=False)
 
         if filter_index:
-            test_mask = self.model_data.index.to_series().apply(
-                lambda x: x.lower().split('_run')[0]
-            ).isin(selected_prefixes)
-            self.testing_set = self.model_data[test_mask]
-            self.training_set = self.model_data[~test_mask]
+            prefix_series = included_data.index.to_series().apply(lambda x: x.lower().split('_run')[0])
+            test_mask = prefix_series.isin(selected_prefixes)
+            test_split = included_data[test_mask]
+            train_split = included_data[~test_mask]
         else:
-            shuffled_data = self.model_data.sample(frac=1, random_state=42)
-            split_point = int(len(shuffled_data) * (1 - test_percent))
-            self.training_set = shuffled_data.iloc[:split_point]
-            self.testing_set = shuffled_data.iloc[split_point:]
+            shuffled = included_data.sample(frac=1, random_state=42)
+            split_point = int(len(shuffled) * (1 - test_percent))
+            train_split = shuffled.iloc[:split_point]
+            test_split = shuffled.iloc[split_point:]
+
+        # Final train/test sets
+        self.training_set = pd.concat([train_split, excluded_data], axis=0)
+        self.testing_set = test_split
 
         self.train_keys = self.training_set.index
         self.test_keys = self.testing_set.index
 
         print(f"Training set length: {len(self.training_set)}. Testing set length: {len(self.testing_set)}")
         return self.training_set, self.testing_set
+
     def select_testing_set(self, test_dataset_names, include_in_training=False, test_split_fraction=None, seed=42069):
         """
         Set specific datasets (by name) as the testing set. Optionally include them in training.
@@ -843,7 +851,15 @@ class ModelAutomater:
         trainer.export_model(model_filename)
         #analyzer = ModelAnalyzer(self.chemical_system, trainer.get_model(), trainer.get_bspline_config(), training_data, structure, structure_feature)
         return self.chemical_system, trainer.get_model(), trainer.get_bspline_config(), features, model_filename
-    def load_fitting_data(self, training_data, testing_data, batch_size=500, num_cores=1, use_cur=False):
+    def get_elements_in_feature_data(self, feature_data):
+        columns = feature_data.columns
+        elements = set()
+        for col in columns:
+            if col.startswith('n_'):
+                element = col.split('_')[1]
+                elements.add(element)
+        
+    def load_fitting_data(self, training_data, testing_data, batch_size=500, num_cores=1, use_cur=False, exclude_elements=None):
         features = []
         for key in self.feature_paths:
             #remove .pkl from the key
@@ -860,14 +876,21 @@ class ModelAutomater:
         trainer.set_training_set(training_data)
         trainer.set_testing_set(testing_data)
         self.fitting_df = trainer.load_fitting_data(features, num_cores=num_cores, use_cur=use_cur)
+        drop_columns = []
+        if exclude_elements is not None:
+            drop_columns = [
+                col for col in self.fitting_df.columns
+                if any(el.lower() in col.lower() for el in exclude_elements)
+            ]
+        self.fitting_df.drop(columns=drop_columns, inplace=True)
         self.fitting_features = features
         return self.chemical_system, self.fitting_df, trainer.get_bspline_config(), features
-    def train_model_from_df(self, model_filename, training_data, testing_data, regularizer, weight=0.3, batch_size=500, num_cores=1, sample_weights=None):
+    def train_model_from_df(self, model_filename, training_data, testing_data, regularizer, weight=0.3, batch_size=500, num_cores=1, sample_weights=None, exclude_elements=None):
         sample_weights_final = self.fill_sample_weights(sample_weights)
         trainer = ModelTrainer(self.model_data, self.chemical_system, self.bspline_config, regularizer)
         trainer.set_training_set(training_data)
         trainer.set_testing_set(testing_data)
-        trainer.fit_from_dataframe(self.fitting_df, weight=weight, batch_size=batch_size, num_cores=num_cores,sample_weights=sample_weights_final if sample_weights is not None else None)
+        trainer.fit_from_dataframe(self.fitting_df, weight=weight, batch_size=batch_size, num_cores=num_cores,sample_weights=sample_weights_final if sample_weights is not None else None, exclude_elements=exclude_elements)
         trainer.export_model(model_filename)
         return self.chemical_system, trainer.get_model(), trainer.get_bspline_config(), None, model_filename
     def train_model_multistep(self, model_filename, training_data, testing_data, regularizer, weight=0.3, batch_size=500):
