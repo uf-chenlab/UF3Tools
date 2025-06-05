@@ -18,7 +18,7 @@ class BaseRelaxationSimulation(BaseSimulation):
             'min_style': 'cg',
             'etol': '1e-25',
             'ftol': '1e-25',
-            'maxiter': '10000',
+            'maxiter': '30000',
             'maxeval': '50000'
         }
         if parameters is not None:

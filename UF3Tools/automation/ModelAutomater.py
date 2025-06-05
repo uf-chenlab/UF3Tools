@@ -120,6 +120,7 @@ class ModelAutomater:
         self.single_crystal_validation_structures = None
         self.fitting_df = None
         self.fitting_features = None
+        self.trainer=None
     def set_fitting_df(self, fitting_df):
         self.fitting_df = fitting_df
     def get_fitting_df(self):
@@ -165,6 +166,10 @@ class ModelAutomater:
         return self.training_set
     def get_testing_set(self):
         return self.testing_set
+    def get_trainer(self):
+        return self.trainer
+    def set_trainer(self, trainer):
+        self.trainer=trainer
     def get_base_directory(self):
         return self.base_directory
     def initialize_directories(self, base_path="."):
@@ -892,7 +897,14 @@ class ModelAutomater:
         trainer.set_testing_set(testing_data)
         trainer.fit_from_dataframe(self.fitting_df, weight=weight, batch_size=batch_size, num_cores=num_cores,sample_weights=sample_weights_final if sample_weights is not None else None, exclude_elements=exclude_elements)
         trainer.export_model(model_filename)
-        return self.chemical_system, trainer.get_model(), trainer.get_bspline_config(), None, model_filename
+        return self.chemical_system, trainer.get_model(), trainer.get_bspline_config(), None, model_filename, trainer
+    def fine_tune_model_from_dataframe_blend(self, trainer, model_filename, training_data, testing_data, regularizer, weight=0.3, batch_size=500, num_cores=1, sample_weights=None, exclude_elements=None, alpha=0.05):
+        sample_weights_final = self.fill_sample_weights(sample_weights)
+        trainer.set_training_set(training_data)
+        trainer.set_testing_set(testing_data)
+        trainer.fine_tune_from_dataframe_blend(self.fitting_df, alpha=alpha, weight=weight, batch_size=batch_size, num_cores=num_cores,sample_weights=sample_weights_final if sample_weights is not None else None, exclude_elements=exclude_elements)
+        trainer.export_model(model_filename)
+        return self.chemical_system, trainer.get_model(), trainer.get_bspline_config(), None, model_filename, trainer
     def train_model_multistep(self, model_filename, training_data, testing_data, regularizer, weight=0.3, batch_size=500):
         """
         Train a model using the given data.
@@ -972,7 +984,7 @@ class ModelAutomater:
         # Use the ModelTrainer to import the model
         trainer = ModelTrainer(self.model_data, self.chemical_system, self.bspline_config, regularizer)
         trainer.import_model(model_filename)
-        
+        self.set_trainer(trainer)
         # Retrieve the imported model
         imported_model = trainer.get_model()
         

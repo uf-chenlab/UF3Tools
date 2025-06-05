@@ -1344,6 +1344,11 @@ class ModelTrainer:
         self.model.fit_from_dataframe_parallel(df, self.train_keys, weight=weight, batch_size=batch_size, energy_key='energy', num_cores=num_cores, progress='bar', sample_weights=sample_weights, exclude_elements=exclude_elements)
     def fit_by_interaction(self, interaction, filenames, weight=0.3, batch_size=500, num_cores=1, sample_weights=None):
         self.model.fit_by_interaction(filenames, self.train_keys, target_interactions=interaction, weight=weight, batch_size=batch_size, energy_key='energy', num_cores=num_cores, progress='bar', sample_weights=sample_weights)
+    def fine_tune_from_dataframe_blend(self, df, alpha=0.05, weight=0.3, batch_size=500, num_cores=1, sample_weights=None, exclude_elements=None):
+        """
+        Fine-tune the model using a DataFrame with blended data.
+        """
+        self.model.fine_tune_from_dataframe_blend(df, self.train_keys, alpha=alpha, weight=weight, batch_size=batch_size, energy_key='energy', num_cores=num_cores, progress='bar', sample_weights=sample_weights, exclude_elements=exclude_elements)
     def export_model(self, filename):
         """
         Export the model to a file.
@@ -2047,7 +2052,7 @@ class ModelAnalyzer:
             for validation, expected_order in relative_orders.items():
                 print("Testing validation:", validation)
                 lammps_results = {}
-
+                print("relative order datas:", datas)
                 for data in datas:
                     print("relative order data")
                     print(data)

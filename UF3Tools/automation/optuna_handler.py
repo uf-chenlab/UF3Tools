@@ -286,7 +286,7 @@ def train_with_preloaded_data(params, settings, trial_id=0):
 
     try:
         # Train the model in parallel with some # of cores (optional)
-        chemical_system, trainer_model, bspline_config, _, _ = automater.train_model_from_df(
+        chemical_system, trainer_model, bspline_config, _, _, _ = automater.train_model_from_df(
             model_filename=model_filename,
             training_data=automater.get_training_set(),
             testing_data=automater.get_testing_set(),
@@ -301,6 +301,7 @@ def train_with_preloaded_data(params, settings, trial_id=0):
         return None, f"Training failed: {exc}"
     
     # Validation
+    print("model finished training")
     analyzer = ModelAnalyzer(
         chemical_system, 
         trainer_model, 
@@ -323,8 +324,12 @@ def train_with_preloaded_data(params, settings, trial_id=0):
     if(settings['loss_weights']['error'] == 0):
         normalized_error = 0
     else:
-        result = analyzer.test_model_prediction(training=False, use_elements=settings['element_list'],)
-        normalized_error= 0.5*((result['rmse_e']/result['sigma_e']) + (result['rmse_f']/result['sigma_f']))
+        print("trying to test model prediction")
+        print(chemical_system.element_list)
+        result = analyzer.test_model_prediction(training=False, use_elements=chemical_system.element_list)
+        print("test model prediction result: ", result)
+        #normalized_error= 0.5*((result['rmse_e']/result['sigma_e']) + (result['rmse_f']/result['sigma_f']))
+        normalized_error = 0.5*(result['rmse_e'] + result['rmse_f'])
     
 
     potential_file = os.path.join(os.getcwd(), "potentials", model_filename)
@@ -347,7 +352,7 @@ def train_with_preloaded_data(params, settings, trial_id=0):
     try:
         validation_data = validate_potential_with_timeout(
             analyzer, potential_label, potential_file, 
-            settings['element_list'], rmse, settings['validations_to_run'], settings['relative_orders'], timeout=7200
+            chemical_system.element_list, rmse, settings['validations_to_run'], settings['relative_orders'], timeout=7200
         )
         print("validation data: ", validation_data)
         if isinstance(validation_data, list):
