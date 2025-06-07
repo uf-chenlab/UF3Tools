@@ -7,6 +7,7 @@ from UF3Tools.common.UF3Utility import *
 from sklearn.metrics import pairwise_distances_argmin_min
 import numpy as np
 import matplotlib.pyplot as plt
+from uf3.util.json_io import *
 from uf3.data import io
 from uf3.data import geometry
 from uf3.data import composition
@@ -2118,6 +2119,185 @@ class UF3LammpsPotentialGenerator:
         pair_style_line = f"pair_style uf3 {self.bspline_config.degree} {len(self.chemical_system.element_list)}"
         pair_coeff_line = f"pair_coeff * * {full_path} " + " ".join(self.chemical_system.element_list)
 
+    import re
+
+    def potential_to_model_json(self, uf3_file_path, output_json_path, potential_version):
+        with open(uf3_file_path, "r") as f:
+            lines = f.readlines()
+
+        # Parse regularizer values from the potential_version string
+        reg_fields = {
+            'ridge_1b': r'_r1b_([-+e0-9.]+)',
+            'ridge_2b': r'_r2b_([-+e0-9.]+)',
+            'ridge_3b': r'_r3b_([-+e0-9.]+)',
+            'curvature_2b': r'_curv2b_([-+e0-9.]+)',
+            'curvature_3b': r'_curv3b_([-+e0-9.]+)'
+        }
+        
+        print("updated bspline config: ", self.bspline_config)
+        regularizer_values = {}
+        for key, pattern in reg_fields.items():
+            match = re.search(pattern, potential_version)
+            if not match:
+                raise ValueError(f"Could not find {key} in potential_version string")
+            regularizer_values[key] = float(match.group(1))
+
+        config = {
+        "r_max_map": self.bspline_config.r_max_map.copy(),
+        "knots_map": self.bspline_config.knots_map.copy(),
+        "leading_trim": self.bspline_config.leading_trim.copy(),
+        "trailing_trim": self.bspline_config.trailing_trim.copy(),
+        #"regularizer": self.bspline_config.get_regularization_matrix(**regularizer_values),
+        "data_coverage": None
+    }
+        print("config bspline: ", self.bspline_config)
+        coeffs = []
+        i = 0
+        while i < len(lines):
+            line = lines[i].strip()
+            if not line or line.startswith("#"):
+                i += 1
+                continue
+            print(line)
+            tokens = line.split()
+            if tokens[0] == "2B":
+                key = tuple(tokens[1:3])
+                config["leading_trim"][2] = int(tokens[3])
+                config["trailing_trim"][2] = int(tokens[4])
+                i += 1
+                print(lines[i])
+                rmax, _ = map(float, lines[i].strip().split())
+                config["r_max_map"][key] = rmax
+                i += 1
+                print(lines[i])
+                knots = list(map(float, lines[i].strip().split()))
+                config["knots_map"][key] = np.array(knots)
+                i += 1
+                print(lines[i])
+                nbasis = int(lines[i].strip())
+                i += 1
+                coeff_line = lines[i].strip().split()
+                if len(coeff_line) != nbasis:
+                    raise ValueError(f"2B: expected {nbasis} coeffs, got {len(coeff_line)} at line {i}")
+                coeffs.extend(map(float, coeff_line))
+                i += 2
+                print(lines[i])
+
+            elif tokens[0] == "3B":
+                print(lines[i])
+                key = tuple(tokens[1:4])
+                config["leading_trim"][3] = int(tokens[4])
+                config["trailing_trim"][3] = int(tokens[5])
+                i += 1
+                print(lines[i])
+                rvals = list(map(float, lines[i].strip().split()))
+                config["r_max_map"][key] = [ rvals[0], rvals[1], rvals[2]]
+                i += 1
+                print(lines[i])
+                k2 = list(map(float, lines[i].strip().split())); i += 1
+                k1 = list(map(float, lines[i].strip().split())); i += 1
+                k0 = list(map(float, lines[i].strip().split())); i += 1
+                config["knots_map"][key] = [ np.array(k2), np.array(k1), np.array(k0)]
+                print(lines[i])
+                shape = tuple(map(int, lines[i].strip().split()))
+                i += 1
+
+                expected_rows = shape[0] * shape[1]
+                expected_cols = shape[2]
+                print(key)
+                print(f"3B shape: {shape}, expected_rows: {expected_rows}, expected_cols: {expected_cols}")
+                
+                for row_idx in range(expected_rows):
+                    row = list(map(float, lines[i].strip().split()))
+                    if len(row) != expected_cols:
+                        raise ValueError(f"3B: line {i} has {len(row)} coeffs, expected {expected_cols}")
+                    coeffs.extend(row)
+                    print(f"3B coeffs row {row_idx}: {row}")
+                    i += 1
+
+                i += 1  # skip "#"
+            else:
+                i += 1
+        print("coeffs shape: ", len(coeffs))
+        config["solution"] = {
+            "coefficients": np.array(coeffs)
+        }
+        # Force symmetry = 1 for all 3B interactions
+        old_symmetry = {}
+        for trio in self.bspline_config.interactions_map.get(3, []):
+            old_symmetry[trio] = self.bspline_config.symmetry[trio]
+            self.bspline_config.symmetry[trio] = 1
+            
+        self.bspline_config.update_basis_functions()
+
+        # Expand 3B knot arrays so symmetry won't be inferred on reload
+        unsym_knots_map = {}
+        for k, v in config["knots_map"].items():
+            if isinstance(k, tuple) and len(k) == 3:
+                if isinstance(v, np.ndarray):
+                    unsym_knots_map[k] = [v.copy(), v.copy(), v.copy()]
+                elif isinstance(v, list) and len(v) == 2:
+                    unsym_knots_map[k] = [v[0].copy(), v[1].copy(), v[1].copy()]
+                else:
+                    unsym_knots_map[k] = [v[0].copy(), v[1].copy(), v[2].copy()]
+            else:
+                unsym_knots_map[k] = v.copy()
+        config["knots_map"] = unsym_knots_map
+        partitions = self.bspline_config.get_interaction_partitions()
+        print(partitions)
+        print("partitions 0: ", partitions[0])
+        expected_total = sum(partitions[0].values())
+        coeff_map = {}
+        coef_array = np.array(coeffs)
+        for trio in self.bspline_config.interactions_map.get(3, []):
+            
+            test = self.bspline_config.compress_3B(coef_array, trio)
+            print(f"3B test for {trio}: {len(test)}")
+        component_sizes, component_offsets = self.bspline_config.get_interaction_partitions(uncompressed=True)
+        #prepend coef_array with two ones
+        for key,count in partitions[0].items():
+            if isinstance(key, str):
+                coef_array = np.concatenate(([1.0], coef_array))
+        
+
+        arranged = least_squares.arrange_coefficients(coef_array, self.bspline_config)
+        for trio in self.bspline_config.interactions_map.get(3, []):
+            print(f'len pre-compress: {len(arranged[trio])} ')
+            arranged[trio] = self.bspline_config.compress_3B(arranged[trio], trio)
+            print(f"3B test 2 for {trio}: {len(arranged[trio])}")
+        start_index = 0
+        for key, count in partitions[0].items():
+            start = partitions[1][key] - start_index
+            stop = start + count
+            sub_coeffs = coef_array[start:stop]
+            
+            if isinstance(key, str):
+                coeff_map[key] = 1
+            elif len(key) == 2:  # 2B
+                coeff_map["-".join(key)] = sub_coeffs.tolist()
+            elif len(key) == 3:
+                
+                original_knots = self.bspline_config.knots_map.get(key)
+                coeff_map["-".join(key)] = arranged[key]
+        component_sizes, component_offsets = self.bspline_config.get_interaction_partitions(uncompressed=False)
+        print(encode_interaction_map(config["knots_map"]))
+        print(encode_interaction_map(coeff_map))
+        print(len(encode_interaction_map(coeff_map)))
+        model_json = {
+            "chemical_system": self.chemical_system.as_dict(),
+            "element_list": self.chemical_system.element_list,
+            "degree": 3,
+            "r_max_map": encode_interaction_map(config["r_max_map"]),
+            "knots_map": encode_interaction_map(config["knots_map"]),
+            "leading_trim": {str(k): v for k, v in config["leading_trim"].items()},
+            "trailing_trim": {str(k): v for k, v in config["trailing_trim"].items()},
+            "regularizer": None,
+            "data_coverage": None,
+            "coefficients": encode_interaction_map(coeff_map)
+        }
+
+        with open(output_json_path, "w") as f:
+            json.dump(model_json, f, indent=2, cls=CompactJSONEncoder)
 
 
     def _write_uf3_lammps_pot_files(self, pot_dir, uf3_lammps_pot_name, author, lammps_units, knots_spacing_type):
@@ -2157,6 +2337,8 @@ class UF3LammpsPotentialGenerator:
             files[key] += "#\n"
 
         # 3B
+        reduced_coefficients = []
+
         if 3 in self.chemical_system.interactions_map:
             for interaction in self.chemical_system.interactions_map[3]:
                 key = "_".join(interaction)
