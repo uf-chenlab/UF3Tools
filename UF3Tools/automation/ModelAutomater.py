@@ -482,7 +482,7 @@ class ModelAutomater:
         print("Repairing structure data...")
         sp = StructureParser(data)
         return sp.get_data()
-    def generate_new_filtered_data(self, data_type, filter_type, check_existing=True, *args, **kwargs ):
+    def generate_new_filtered_data(self, data_type, filter_type, check_existing=True, *args):
         """
         Generate new filtered data based on the data type and filter type provided.
         
@@ -531,7 +531,7 @@ class ModelAutomater:
             return
         
         # Apply the filter with the provided arguments
-        filter_method(*args,**kwargs)
+        filter_method(*args)
         
         # Export the filtered data to a new pickle file in the filtered directory
         data_filter.export_to_pickle(filtered_file_path)
@@ -540,7 +540,7 @@ class ModelAutomater:
         
         # Reload the filtered data
         self.load_filtered_data()
-    def filter_all_data(self, filter_type, check_existing=True, *args,**kwargs):
+    def filter_all_data(self, filter_type, check_existing=True, *args):
         """
         Apply a filter to all data types we have.
 
@@ -585,7 +585,7 @@ class ModelAutomater:
                 print(f"Filter method {filter_method_name} not found in DataFilter.")
                 continue
 
-            filter_method(*args, **kwargs)
+            filter_method(*args)
 
             data_filter.export_to_pickle(filtered_file_path)
 
