@@ -383,24 +383,33 @@ def objective(trial, client, settings):
     Optuna objective that:
       1) Samples hyperparams
       2) Submits them to a Dask worker
-      3) Retrieves the result (RMSE)
+      3) Retrieves the result (RMSE / Loss)
     """
-    # Pick hyperparams
-    ridge_1b     = trial.suggest_float("ridge_1b", 1e-9, 1e-1, log=True)
-    ridge_2b     = trial.suggest_float("ridge_2b", 1e-9, 1e-1, log=True)
-    ridge_3b     = trial.suggest_float("ridge_3b", 1e-9, 1e-1, log=True)
-    curvature_2b = trial.suggest_float("curvature_2b", 1e-9, 1e-1, log=True)
-    curvature_3b = trial.suggest_float("curvature_3b", 1e-9, 1e-1, log=True)
-    weight       = trial.suggest_float("weight",    0.01, 1.0,  log=False)
+
+    # === Helper to get bounds from settings or fallback ===
+    def get_range(param, default):
+        return settings.get("hyperparameter_bounds", {}).get(param, default)
+
+    # === Sample Fitting/Spline Hyperparameters ===
+    ridge_1b     = trial.suggest_float("ridge_1b",     *get_range("ridge_1b",     (1e-9, 1e-1)), log=True)
+    ridge_2b     = trial.suggest_float("ridge_2b",     *get_range("ridge_2b",     (1e-9, 1e-1)), log=True)
+    ridge_3b     = trial.suggest_float("ridge_3b",     *get_range("ridge_3b",     (1e-9, 1e-1)), log=True)
+    curvature_2b = trial.suggest_float("curvature_2b", *get_range("curvature_2b", (1e-9, 1e-1)), log=True)
+    curvature_3b = trial.suggest_float("curvature_3b", *get_range("curvature_3b", (1e-9, 1e-1)), log=True)
+    weight       = trial.suggest_float("weight",       *get_range("weight",       (0.01, 1.0)), log=False)
 
     params = (ridge_1b, ridge_2b, ridge_3b, curvature_2b, curvature_3b, weight)
-    
-    if settings['optimize_sample_weights']:
+
+    # === Sample Weights ===
+    if settings.get('optimize_sample_weights', False):
         sample_weights = {}
         raw_weights = []
-        
+
+        sw_bounds = settings.get("sample_weight_bounds", {})  # dict of per-key bounds
+
         for key in settings["sample_weights_to_optimize"]:
-            raw_weight = trial.suggest_float(f"sample_weights_{key}", 0.01, 1.0, log=False)
+            low, high = sw_bounds.get(key, (0.01, 1.0))
+            raw_weight = trial.suggest_float(f"sample_weights_{key}", low, high, log=False)
             raw_weights.append(raw_weight)
 
         # Normalize so they sum to 1
@@ -412,34 +421,38 @@ def objective(trial, client, settings):
 
         settings['sample_weights'].update(sample_weights)
 
-    # Submit the training/validation to a worker
+    # === Submit to Dask worker ===
     future = client.submit(
-        train_with_preloaded_data, 
+        train_with_preloaded_data,
         params,
         settings,
-        trial_id=trial.number,  # for labeling
+        trial_id=trial.number,
         pure=False
     )
-    
+
     result = future.result()
 
     if isinstance(result, tuple) and len(result) == 2:
         validation_data, normalized_error = result
     else:
-        print("weird else case: ", result)
+        print("Unexpected result: ", result)
         return None
-
 
     if validation_data is None:
-        # Return a large penalty
-        print(f"[Trial {trial.number}] failed: {validation_data}")
+        print(f"[Trial {trial.number}] failed.")
         return None
-    print(validation_data)
-    # Parse RMSE from validation_data
-    # Adjust to your actual data structure
-    loss = parse_validation_data(validation_data, normalized_error, settings['acceptable_errors'], settings['loss_weights'])
+
+    # === Compute final loss ===
+    loss = parse_validation_data(
+        validation_data,
+        normalized_error,
+        settings['acceptable_errors'],
+        settings['loss_weights']
+    )
 
     return loss
+
+
 
 from dask import config
 def run_optuna_tpe_with_dask_hpc(
