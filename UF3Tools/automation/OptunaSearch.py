@@ -126,7 +126,9 @@ class UF3AbstractOptunaTrainer():
             "num_cores": self.settings['cores_per_job']
         }
         self.settings['ignore_list'] = self.automater.get_ignore_list()
-        self.settings['trainer'] = self.automater.get_trainer()
+        if self.settings.get('trainer') is None:
+            self.settings['trainer'] = self.automater.get_trainer()
+
         self.cluster = SLURMCluster(
             account=self.settings['account'],
             cores=self.settings['cores_per_job'],
@@ -378,9 +380,10 @@ class UF3AbstractOptunaTrainer():
         if(settings['loss_weights']['error'] == 0):
             normalized_error = 0
         else:
-            result = analyzer.test_model_prediction(training=False, use_elements=chemical_system.element_list,)
+            #result = analyzer.test_model_prediction(training=False, use_elements=chemical_system.element_list,)
             #normalized_error= 0.5*((result['rmse_e']/result['sigma_e']) + (result['rmse_f']/result['sigma_f']))
-            normalized_error = 0.5*(result['rmse_e'] + result['rmse_f'])
+            #normalized_error = 0.5*(result['rmse_e'] + result['rmse_f'])
+            normalized_error=0
         
 
         potential_file = os.path.join(os.getcwd(), "potentials", model_filename)
@@ -598,8 +601,9 @@ class UF3OptunaTPETrainer(UF3AbstractOptunaTrainer):
         return loss
 
 class UF3OptunaTPEFineTuningTrainer(UF3AbstractOptunaTrainer):
-    def __init__(self, base_directory, automater, settings, job_params):
+    def __init__(self, base_directory, automater, settings, job_params, model_path):
         super().__init__(base_directory, automater, settings, job_params)
+        self.model_path = model_path
 
     def run(self, temp_search=False):
         self.init_workers()
@@ -638,7 +642,7 @@ class UF3OptunaTPEFineTuningTrainer(UF3AbstractOptunaTrainer):
         if automater is None:
             raise RuntimeError("No automater loaded on this worker! Did you run worker_init_once?")
 
-        (ridge_1b, ridge_2b, ridge_3b, curvature_2b, curvature_3b, weight, alpha) = params
+        (ridge_1b, ridge_2b, ridge_3b, curvature_2b, curvature_3b, weight, alpha, model) = params
         potential_label = (
             f"trial_{trial_id}_r1b_{ridge_1b}_r2b_{ridge_2b}_r3b_{ridge_3b}_"
             f"curv2b_{curvature_2b}_curv3b_{curvature_3b}_w_{weight}"
@@ -660,6 +664,30 @@ class UF3OptunaTPEFineTuningTrainer(UF3AbstractOptunaTrainer):
         }
 
         try:
+            chemical_system, trainer_model,bspline_config, features= automater.import_model(regularizer, "/blue/ypchen/ntaormina/uf3/AlN/test_auto/UF3-Tools/test_model")
+
+            generator = UF3LammpsPotentialGenerator(trainer_model, chemical_system, bspline_config)
+            generator.potential_to_model_json('/blue/ypchen/ntaormina/uf3/AlN/test_auto/UF3-Tools/grid_search_results/worker_c0713a-s21.ufhpc-4099472/db916af2-e2d1-4da2-a54e-bbb00227', '/blue/ypchen/ntaormina/uf3/AlN/test_auto/UF3-Tools/db916af2-e2d1-4da2-a54e-bbb00227.json', 'db916af2-e2d1-4da2-a54e-bbb00227_trial_445_r1b_1.3767099184507492e-09_r2b_9.354851029931691e-09_r3b_2.8391161554856034e-08_curv2b_1.2092727600321928e-06_curv3b_9.25158512840749e-08_w_0.9985110353270067_sw_structure_0.04_isif_pressure2_0.02_AlN_structures_0.24_solid_n2_structure_0.11_relaxed_polytypes_0.15_elastic_tensor_2x2x2_0.19_complete_structures_0.24')
+
+            automater.import_model(regularizer, model)
+            analyzer = ModelAnalyzer(chemical_system, trainer_model, bspline_config, automater.get_training_set(), automater.get_testing_set(), automater.get_fitting_features(), dft_validation_folder='/blue/ypchen/ntaormina/uf3/AlN/test_auto/UF3-Tools/validation/structures/')
+            model_filename = datetime.now().strftime("%Y%m%d_%H%M%S")
+            materials = ['mp-661']
+            analyzer.set_dft_validation_structures(materials)
+            analyzer.set_lammps_validation_structures(materials)
+            analyzer.set_up_folder_structure()
+            analyzer.retrieve_model_files()
+            for pair in chemical_system.interactions_map[2]:
+                analyzer.fix_repulsion_2b(pair=pair, r_target=1.0, min_curvature=50.0)
+            # results = analyzer.analyze_model(automater.data_coordinator)
+            # energy_ids, force_ids, energy_bad, force_bad = analyzer.find_problematic_data(2.5, 2.5)
+            # output_file = "energy_bad.xlsx"
+            # energy_bad.to_excel(output_file)
+            # output_file = "force_bad.xlsx"
+            # force_bad.to_excel(output_file)
+
+            analyzer.export_model_to_lammps("potentials/", model_filename, True, "ntaormina", "metal", "nk")
+            
             # Train the model in parallel with some # of cores (optional)
             chemical_system, trainer_model, bspline_config, _, _,_ = automater.fine_tune_model_from_dataframe_blend(
                 trainer=automater.get_trainer(),
@@ -685,7 +713,7 @@ class UF3OptunaTPEFineTuningTrainer(UF3AbstractOptunaTrainer):
         curvature_3b = trial.suggest_float("curvature_3b", 1e-9, 1e-1, log=True)
         weight = trial.suggest_float("weight", 0.01, 1.0, log=False)
         alpha = trial.suggest_float("alpha", 0.01, 1.0, log=False)
-        params = (ridge_1b, ridge_2b, ridge_3b, curvature_2b, curvature_3b, weight, alpha)
+        params = (ridge_1b, ridge_2b, ridge_3b, curvature_2b, curvature_3b, weight, alpha, self.model_path)
 
         if self.settings['optimize_sample_weights']:
             weights = [

@@ -1358,13 +1358,13 @@ class ModelTrainer:
         """
         self.model.to_json(filename)
         print(f'Model has been exported to {filename}')
-    def import_model(self, filename):
+    def import_model(self, filename, bspline_config=None):
         """
         Import the model from a file.
 
         :param filename: Name of the file.
         """
-        self.model = least_squares.WeightedLinearModel.from_json(filename)
+        self.model = least_squares.WeightedLinearModel.from_json(filename, bspline_config=bspline_config)
         print(f'Model has been imported from {filename}')
     def get_model(self):
         """
@@ -2153,6 +2153,7 @@ class UF3LammpsPotentialGenerator:
         print("config bspline: ", self.bspline_config)
         coeffs = []
         i = 0
+        self.expected_shapes = {}
         while i < len(lines):
             line = lines[i].strip()
             if not line or line.startswith("#"):
@@ -2177,6 +2178,7 @@ class UF3LammpsPotentialGenerator:
                 nbasis = int(lines[i].strip())
                 i += 1
                 coeff_line = lines[i].strip().split()
+                self.expected_shapes[key] = nbasis
                 if len(coeff_line) != nbasis:
                     raise ValueError(f"2B: expected {nbasis} coeffs, got {len(coeff_line)} at line {i}")
                 coeffs.extend(map(float, coeff_line))
@@ -2197,6 +2199,9 @@ class UF3LammpsPotentialGenerator:
                 k2 = list(map(float, lines[i].strip().split())); i += 1
                 k1 = list(map(float, lines[i].strip().split())); i += 1
                 k0 = list(map(float, lines[i].strip().split())); i += 1
+                #sort by order
+                if len(k2) > len(k0):
+                    k2, k1, k0 = k0, k1, k2
                 config["knots_map"][key] = [ np.array(k2), np.array(k1), np.array(k0)]
                 print(lines[i])
                 shape = tuple(map(int, lines[i].strip().split()))
@@ -2204,6 +2209,7 @@ class UF3LammpsPotentialGenerator:
 
                 expected_rows = shape[0] * shape[1]
                 expected_cols = shape[2]
+                self.expected_shapes[key] = shape
                 print(key)
                 print(f"3B shape: {shape}, expected_rows: {expected_rows}, expected_cols: {expected_cols}")
                 
@@ -2231,18 +2237,18 @@ class UF3LammpsPotentialGenerator:
         self.bspline_config.update_basis_functions()
 
         # Expand 3B knot arrays so symmetry won't be inferred on reload
-        unsym_knots_map = {}
-        for k, v in config["knots_map"].items():
-            if isinstance(k, tuple) and len(k) == 3:
-                if isinstance(v, np.ndarray):
-                    unsym_knots_map[k] = [v.copy(), v.copy(), v.copy()]
-                elif isinstance(v, list) and len(v) == 2:
-                    unsym_knots_map[k] = [v[0].copy(), v[1].copy(), v[1].copy()]
-                else:
-                    unsym_knots_map[k] = [v[0].copy(), v[1].copy(), v[2].copy()]
-            else:
-                unsym_knots_map[k] = v.copy()
-        config["knots_map"] = unsym_knots_map
+        # unsym_knots_map = {}
+        # for k, v in config["knots_map"].items():
+        #     if isinstance(k, tuple) and len(k) == 3:
+        #         if isinstance(v, np.ndarray):
+        #             unsym_knots_map[k] = [v.copy(), v.copy(), v.copy()]
+        #         elif isinstance(v, list) and len(v) == 2:
+        #             unsym_knots_map[k] = [v[0].copy(), v[1].copy(), v[1].copy()]
+        #         else:
+        #             unsym_knots_map[k] = [v[0].copy(), v[1].copy(), v[2].copy()]
+        #     else:
+        #         unsym_knots_map[k] = v.copy()
+        # config["knots_map"] = unsym_knots_map
         partitions = self.bspline_config.get_interaction_partitions()
         print(partitions)
         print("partitions 0: ", partitions[0])
@@ -2263,8 +2269,8 @@ class UF3LammpsPotentialGenerator:
         arranged = least_squares.arrange_coefficients(coef_array, self.bspline_config)
         for trio in self.bspline_config.interactions_map.get(3, []):
             print(f'len pre-compress: {len(arranged[trio])} ')
-            arranged[trio] = self.bspline_config.compress_3B(arranged[trio], trio)
-            print(f"3B test 2 for {trio}: {len(arranged[trio])}")
+            # arranged[trio] = self.bspline_config.compress_3B(arranged[trio], trio)
+            # print(f"3B test 2 for {trio}: {len(arranged[trio])}")
         start_index = 0
         for key, count in partitions[0].items():
             start = partitions[1][key] - start_index
@@ -2276,9 +2282,13 @@ class UF3LammpsPotentialGenerator:
             elif len(key) == 2:  # 2B
                 coeff_map["-".join(key)] = sub_coeffs.tolist()
             elif len(key) == 3:
+                shape = self.expected_shapes[key]
+                coeff_block = np.array(arranged[key])
+                if coeff_block.size != np.prod(shape):
+                    raise ValueError(f"Unexpected coeff size for {key}: {coeff_block.size}, expected {np.prod(shape)}")
                 
-                original_knots = self.bspline_config.knots_map.get(key)
-                coeff_map["-".join(key)] = arranged[key]
+                reshaped = coeff_block.reshape(shape)
+                coeff_map["-".join(key)] = [reshaped[i].tolist() for i in range(shape[0])]
         component_sizes, component_offsets = self.bspline_config.get_interaction_partitions(uncompressed=False)
         print(encode_interaction_map(config["knots_map"]))
         print(encode_interaction_map(coeff_map))
@@ -2289,6 +2299,7 @@ class UF3LammpsPotentialGenerator:
             "degree": 3,
             "r_max_map": encode_interaction_map(config["r_max_map"]),
             "knots_map": encode_interaction_map(config["knots_map"]),
+            "knots": encode_interaction_map(config['knots_map']),
             "leading_trim": {str(k): v for k, v in config["leading_trim"].items()},
             "trailing_trim": {str(k): v for k, v in config["trailing_trim"].items()},
             "regularizer": None,
@@ -2309,6 +2320,25 @@ class UF3LammpsPotentialGenerator:
         trailing_trim_2B = self.bspline_config.trailing_trim.get(2, 0)
         leading_trim_3B = self.bspline_config.leading_trim.get(3, 0)
         trailing_trim_3B = self.bspline_config.trailing_trim.get(3, 0)
+        #sum up the interactions
+        interaction_sum = 0
+        for interaction in self.bspline_config.get_interaction_partitions()[0]:
+            interaction_sum += self.bspline_config.get_interaction_partitions()[0][interaction]
+        print("interaction sum: ", interaction_sum)
+        if interaction_sum > len(self.model.coefficients):
+            for trio in self.bspline_config.interactions_map.get(3, []):
+                r_min = self.bspline_config.r_min_map[trio]
+                r_max = self.bspline_config.r_max_map[trio]
+                res = self.bspline_config.resolution_map[trio]
+                self.bspline_config.symmetry[trio] = bspline.find_symmetry_3B(trio, r_min, r_max, res)
+                print(f'Symmetry for {trio} set to {self.bspline_config.symmetry[trio]}')
+        self.bspline_config.update_basis_functions()
+        interaction_sum = 0
+        for interaction in self.bspline_config.get_interaction_partitions()[0]:
+            interaction_sum += self.bspline_config.get_interaction_partitions()[0][interaction]
+        print("interaction sum: ", interaction_sum)
+        if interaction_sum != len(self.model.coefficients):
+            raise ValueError(f"Interaction sum {interaction_sum} does not match model coefficients length {len(self.model.coefficients)}")
 
         # 2B
         for interaction in self.chemical_system.interactions_map[2]:
@@ -2364,7 +2394,8 @@ class UF3LammpsPotentialGenerator:
                 files[key] += " ".join(['{:.17g}'.format(v) for v in knots2]) + "\n"
                 files[key] += " ".join(['{:.17g}'.format(v) for v in knots1]) + "\n"
                 files[key] += " ".join(['{:.17g}'.format(v) for v in knots0]) + "\n"
-
+                print("coefficient len: ", len(self.model.coefficients))
+                print("bspline interaction partitions: ", self.bspline_config.get_interaction_partitions())
                 arranged = least_squares.arrange_coefficients(self.model.coefficients, self.bspline_config)
                 decompressed = self.bspline_config.decompress_3B(arranged[interaction], interaction)
                 files[key] += f"{decompressed.shape[0]} {decompressed.shape[1]} {decompressed.shape[2]}\n"
