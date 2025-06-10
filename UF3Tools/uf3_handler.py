@@ -742,12 +742,12 @@ class DataFilter:
         :param data: DataFrame containing parsed data.
         """
         self.data = data
-    def filter_reduce_data_points(self, num_points):
-        print(f"Reducing data from {len(self.data)} points to {num_points} points.")
+    def filter_reduce_data_points(self, num_points, random_seed=None):
+        print(f"Reducing data from {len(self.data)} points to {num_points} points with random seed = {random_seed}.")
         if num_points >= len(self.data):
             print("Requested number of points is greater than or equal to the current data size. No reduction applied.")
             return
-        self.data = self.data.sample(n=num_points)
+        self.data = self.data.sample(n=num_points, random_state=random_seed)
     def filter_increase_data_points(self, num_points):
         additional_rows_needed = num_points - len(self.data)
         print(f"Increasing data from {len(self.data)} points to {num_points} points.")

@@ -482,7 +482,7 @@ class ModelAutomater:
         print("Repairing structure data...")
         sp = StructureParser(data)
         return sp.get_data()
-    def generate_new_filtered_data(self, data_type, filter_type, check_existing=True, *args ):
+    def generate_new_filtered_data(self, data_type, filter_type, check_existing=True, *args):
         """
         Generate new filtered data based on the data type and filter type provided.
         
