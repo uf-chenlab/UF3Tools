@@ -671,7 +671,6 @@ class UF3OptunaTPEFineTuningTrainer(UF3AbstractOptunaTrainer):
 
             automater.import_model(regularizer, model)
             analyzer = ModelAnalyzer(chemical_system, trainer_model, bspline_config, automater.get_training_set(), automater.get_testing_set(), automater.get_fitting_features(), dft_validation_folder='/blue/ypchen/ntaormina/uf3/AlN/test_auto/UF3-Tools/validation/structures/')
-            model_filename = datetime.now().strftime("%Y%m%d_%H%M%S")
             materials = ['mp-661']
             analyzer.set_dft_validation_structures(materials)
             analyzer.set_lammps_validation_structures(materials)

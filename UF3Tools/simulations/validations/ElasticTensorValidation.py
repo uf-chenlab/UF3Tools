@@ -22,6 +22,7 @@ class ElasticTensorValidation(PotentialValidation):
         print(f'parameters: {parameters}')
         self.default_kwargs = {
             "min_style": "cg",
+            "pair_style": "uf3",
             "uf3_elements": element_list
         }
         self.kwargs = self.default_kwargs
@@ -39,6 +40,7 @@ class ElasticTensorValidation(PotentialValidation):
             "shear_modulus_hill": None,
         }
         self.lammps_data = dict(self.dft_data)
+        self.lammps_model_file = os.path.abspath(lammps_model_file)
         self.use_dft = False
 
         self.sim_template_file = os.path.join(
@@ -46,6 +48,7 @@ class ElasticTensorValidation(PotentialValidation):
             "in.elastic"
         )
         self.input_file = "lammps.in"
+        print("self lammps model file: ", self.lammps_model_file)
         self.simulation = ElasticTensorSimulation(
             self.sim_template_file,
             self.lammps_model_file,
@@ -55,7 +58,7 @@ class ElasticTensorValidation(PotentialValidation):
             parameters=parameters
         )
         self.setup_input_file(os.path.join(self.simulation.get_directory(), self.sim_template_file), os.path.join(self.simulation.get_directory(), self.input_file), self.simulation.get_parameters())
-
+        shutil.copy(os.path.join(self.simulation.get_directory(), "in.elastic"), os.path.join(self.simulation.get_directory(), "lammps.in"))
     def retrieve_dft_result(self, path):
         from ..common.DFTDataParser import DFTDataParser
         print(f'path: {path}')

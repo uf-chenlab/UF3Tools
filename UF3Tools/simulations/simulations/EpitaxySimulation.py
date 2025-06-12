@@ -10,6 +10,7 @@ class EpitaxySimulation(CompleteLammpsSimulation):
         self.input_file = os.path.abspath(input_file)
         self.parameters = {
             'atom_style': 'atomic',
+            "pair_style": "uf3",
             'boundary': 'p p f',
             'min_z_height': '0',
             'max_z_height': '80',

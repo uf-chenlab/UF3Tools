@@ -71,9 +71,11 @@ class CompleteLammpsSimulation(LammpsSimulation):
             print(f' simulation params: {self.get_parameters()}')
             self.set_input_file_variables()
     def set_input_file_variables(self):
+        print("set input file variables: ", self.input_file)
         handler = LammpsInputFileHandler(self.input_file, self.input_file, self.parameters)
         handler.generate_input_file()
     def copy_simulation_files(self, input_file, model_file, potential_file, run_script, extra_files):
+        print(f'copying simulation files: {input_file}, {model_file}, {potential_file}, {run_script}, {extra_files}')
         shutil.copy(input_file, self.simulation_directory)
         shutil.copy(model_file, self.simulation_directory)
         shutil.copy(potential_file, self.simulation_directory)
@@ -82,6 +84,8 @@ class CompleteLammpsSimulation(LammpsSimulation):
             shutil.copy(file, self.simulation_directory)     
     def setup_input_file(self):
         handler = LammpsInputFileModifier(self.input_file)
+        print("simulation type for input: ", self.simulation_directory)
+        print(f"setting up input file: {self.input_file} {self.model_file}")
         modify_input = {
             'read_data {parameter}': [self.model_file],
             'pair_coeff * * {parameter}': [self.potential_file],

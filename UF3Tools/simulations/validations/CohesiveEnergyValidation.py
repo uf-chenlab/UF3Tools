@@ -22,6 +22,7 @@ class CohesiveEnergyValidation(PotentialValidation):
         )
         self.default_kwargs = {
             "min_style": "cg",
+            "pair_style": "uf3",
             "uf3_elements": element_list
         }
         self.kwargs = self.default_kwargs

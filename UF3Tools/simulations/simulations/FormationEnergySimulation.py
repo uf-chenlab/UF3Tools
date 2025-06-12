@@ -14,6 +14,7 @@ class FormationEnergySimulation(CompoundSimulation):
         self.input_file = os.path.abspath(input_file)
         self.parameters = {
             'atom_style': 'atomic',
+            "pair_style": "uf3",
             'uf3_degree': '3',
             'masses':''
         }

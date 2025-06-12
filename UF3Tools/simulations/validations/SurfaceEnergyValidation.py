@@ -5,8 +5,8 @@ class SurfaceEnergyValidation(PotentialValidation):
     @classmethod
     def get_required_base_simulations(cls):
         return None
-    computational_weight=1
-    required_supercell = (1,1,1)
+    computational_weight=2
+    required_supercell = (1,1,6)
     def __init__(self, potential_file, lammps_model_file, dft_model_file, element_list, validation_folder_path, run_scripts, template_directory, parameters=None):
         abs_validation_path = os.path.abspath(validation_folder_path)
         super().__init__(
@@ -21,6 +21,7 @@ class SurfaceEnergyValidation(PotentialValidation):
         )
         self.default_kwargs = {
             "min_style": "cg",
+            "pair_style": "uf3",
             "uf3_elements": element_list
         }
         self.kwargs = self.default_kwargs

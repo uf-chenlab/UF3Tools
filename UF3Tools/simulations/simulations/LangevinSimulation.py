@@ -10,6 +10,7 @@ class LangevinSimulation(CompleteLammpsSimulation):
         self.parameters = {
             'atom_style': 'atomic',
             'uf3_degree': '3',
+            "pair_style": "uf3",
             'uf3_file': 'AlN.uf3',
             'uf3_elements': 'Al N',
             'min_style': 'cg',

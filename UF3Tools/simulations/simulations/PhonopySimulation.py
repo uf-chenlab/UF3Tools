@@ -15,6 +15,7 @@ class PhonopySimulation(CompoundSimulation):
         self.parameters = {
             'atom_style': 'atomic',
             'uf3_degree': '3',
+            "pair_style": "uf3",
             'masses':''
         }
         if parameters is not None:

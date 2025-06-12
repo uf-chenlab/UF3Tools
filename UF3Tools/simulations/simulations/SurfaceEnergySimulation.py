@@ -14,6 +14,7 @@ class SurfaceEnergySimulation(CompleteLammpsSimulation):
             "atom_style": "atomic",
             "change_box": "",
             "box_relax_settings": "",
+            "pair_style": "uf3",
             "uf3_degree": "3",
             "min_style": "cg",
             "etol": "1e-25",

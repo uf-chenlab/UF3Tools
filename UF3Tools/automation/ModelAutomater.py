@@ -1075,7 +1075,40 @@ class ModelAutomater:
                 for data in data_group:
                     f.write(str(data))
                     f.write('\n')
-        
+    def store_validation_data_alternate_dir_standalone(model_filename, validation_data, base_folder):
+        print("writing validation data to file")
+        abs_base = os.path.abspath(base_folder)
+        validation_datas = []
+        potential_dir = os.path.join(abs_base, 'validation_datas')
+        if not os.path.exists(potential_dir):
+            os.makedirs(potential_dir)
+
+        # Write the primary percent-error data
+        validation_file = os.path.join(potential_dir, f"{model_filename}_validation_data.txt")
+        with open(validation_file, 'w') as f:
+            if isinstance(validation_data, list):
+                for data in validation_data:
+                    f.write(str(data))
+                    f.write('\n')
+            else:
+                f.write(str(validation_data))
+                f.write('\n')
+
+        # Save raw data for each ValidationData object to a separate file
+        if isinstance(validation_data, list):
+            for data in validation_data:
+                data.save_raw_data_to_file(potential_dir)
+        else:
+            validation_data.save_raw_data_to_file(potential_dir)
+
+        # If you keep a master list, you can write them all below
+        validation_datas.append(validation_data)
+        all_data_file = os.path.join(abs_base, 'validation_datas.txt')
+        with open(all_data_file, 'w') as f:
+            for data_group in validation_datas:
+                f.write(str(data_group))
+                f.write('\n')
+            
     def get_all_dataframes(self):
         """
         Retrieve all the DataFrames used in training the model, including both base and filtered data frames.

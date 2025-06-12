@@ -11,11 +11,12 @@ class LatticeConstantSimulation(CompoundSimulation):
         self.input_file = os.path.abspath(input_file)
         self.parameters = {
             "atom_style": "atomic",
+            "pair_style": "uf3",
             "x_boundary": "p",
             "y_boundary": "p",
             "z_boundary": "p",
             "change_box": "",
-            "uf3_degree": "2",
+            "uf3_degree": "3",
             "box_relax_settings": "fix 1 all box/relax iso 0.0 vmax 0.001",
             "min_style": "cg",
             "etol": "1e-25",

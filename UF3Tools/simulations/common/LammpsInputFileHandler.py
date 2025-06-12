@@ -11,7 +11,7 @@ class LammpsInputFileHandler():
         self.template_file = template_file
         self.output_file = output_file
         self.parameters = parameters
-        print(f'input file handler parameters: {self.parameters}')
+        print(f'input file handler parameters: {self.parameters} {self.template_file} {self.output_file}')
 
     def generate_input_file(self):
         with open(self.template_file, 'r') as file:
@@ -35,6 +35,7 @@ class LammpsInputFileModifier:
         self.parameters = {}
 
     def modify_input_file(self, parameters=None):
+        print(f'modifying input file: {self.input_file} with parameters: {parameters}')
         if parameters is None:
             return
         with open(self.input_file, 'r') as file:

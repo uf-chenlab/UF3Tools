@@ -11,6 +11,7 @@ class BaseSingleCrystalRelaxationSimulation(BaseSingleCrystalSimulation):
         self.input_file = os.path.abspath(input_file)
         self.parameters = {
             'atom_style': 'atomic',
+            "pair_style": "uf3",
             'x_boundary': 'p',
             'y_boundary': 'p',
             'z_boundary': 'p',

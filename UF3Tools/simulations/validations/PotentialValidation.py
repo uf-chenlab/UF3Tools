@@ -31,6 +31,7 @@ class PotentialValidation:
 
     def __init__(self, simulation_type, potential_file, lammps_model_file, dft_model_file, element_list, root_directory, run_scripts, use_dft=False):
         # Ensure all file paths are absolute
+        print("simulation type: ", simulation_type)
         self.potential_file = os.path.abspath(potential_file)
         self.lammps_model_file = os.path.abspath(lammps_model_file)
         self.dft_model_file = os.path.abspath(dft_model_file)

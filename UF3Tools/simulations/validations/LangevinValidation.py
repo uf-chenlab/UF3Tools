@@ -3,6 +3,7 @@ class LangevinValidation(PotentialValidation):
     def __init__(self, potential_file, lammps_model_file, dft_model_file, element_list,**kwargs):
         self.default_kwargs = {
             'min_style': 'cg',
+            "pair_style": "uf3",
             'uf3_elements': element_list
         }
         # Update the default keyword arguments with the user-specified arguments
