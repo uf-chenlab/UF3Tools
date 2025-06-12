@@ -1565,7 +1565,7 @@ class ModelTrainerMultipleSteps:
         """
         return self.model        
 class ModelAnalyzer:
-    def __init__(self, chemical_system, model, bspline_config, training_data, testing_data, feature_filenames, dft_validation_folder = None, r_cut = 10, bins = 0.01):
+    def __init__(self, chemical_system, model, bspline_config, training_data, testing_data, feature_filenames, config_directory, dft_validation_folder = None, r_cut = 10, bins = 0.01):
         """
         Initialize the ModelAnalyzer with a chemical system, model, and data.
 
@@ -1579,6 +1579,7 @@ class ModelAnalyzer:
         self.training_keys = training_data.index
         self.testing_data = testing_data
         self.testing_keys = testing_data.index
+        self.config_directory = config_directory
         self.feature_filenames = feature_filenames
         self.dft_validation_folder = dft_validation_folder
         self.dft_validation_structures = []
@@ -1988,9 +1989,10 @@ class ModelAnalyzer:
                 lammps_file,
                 dft_file,
                 element_list_str,
-                validation_folder_path,
-                dft_validation_folder,
-                validations_to_run
+                config_directory=self.config_directory,
+                validation_folder_path=validation_folder_path,
+                dft_validation_folder=dft_validation_folder,
+                validations_to_run=validations_to_run
             )
             if(single_crystal_data is not None):
                 manager.set_single_crystal_data(single_crystal_data)

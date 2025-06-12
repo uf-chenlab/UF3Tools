@@ -365,6 +365,7 @@ class UF3AbstractOptunaTrainer():
             automater.get_training_set(),
             automater.get_testing_set(),
             automater.get_fitting_features(),
+            config_directory=settings['config_directory'],
             dft_validation_folder = settings.get('dft_validation_folder', None),
         )
 
@@ -670,7 +671,14 @@ class UF3OptunaTPEFineTuningTrainer(UF3AbstractOptunaTrainer):
             generator.potential_to_model_json('/blue/ypchen/ntaormina/uf3/AlN/test_auto/UF3-Tools/grid_search_results/worker_c0713a-s21.ufhpc-4099472/db916af2-e2d1-4da2-a54e-bbb00227', '/blue/ypchen/ntaormina/uf3/AlN/test_auto/UF3-Tools/db916af2-e2d1-4da2-a54e-bbb00227.json', 'db916af2-e2d1-4da2-a54e-bbb00227_trial_445_r1b_1.3767099184507492e-09_r2b_9.354851029931691e-09_r3b_2.8391161554856034e-08_curv2b_1.2092727600321928e-06_curv3b_9.25158512840749e-08_w_0.9985110353270067_sw_structure_0.04_isif_pressure2_0.02_AlN_structures_0.24_solid_n2_structure_0.11_relaxed_polytypes_0.15_elastic_tensor_2x2x2_0.19_complete_structures_0.24')
 
             automater.import_model(regularizer, model)
-            analyzer = ModelAnalyzer(chemical_system, trainer_model, bspline_config, automater.get_training_set(), automater.get_testing_set(), automater.get_fitting_features(), dft_validation_folder='/blue/ypchen/ntaormina/uf3/AlN/test_auto/UF3-Tools/validation/structures/')
+            analyzer = ModelAnalyzer(chemical_system, 
+                                     trainer_model,
+                                     bspline_config,
+                                     automater.get_training_set(),
+                                     automater.get_testing_set(),
+                                     automater.get_fitting_features(),
+                                     config_directory=settings['config_directory'],
+                                     dft_validation_folder='/blue/ypchen/ntaormina/uf3/AlN/test_auto/UF3-Tools/validation/structures/')
             materials = ['mp-661']
             analyzer.set_dft_validation_structures(materials)
             analyzer.set_lammps_validation_structures(materials)

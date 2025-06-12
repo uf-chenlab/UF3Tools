@@ -309,6 +309,7 @@ def train_with_preloaded_data(params, settings, trial_id=0):
         automater.get_training_set(),
         automater.get_testing_set(),
         automater.get_fitting_features(),
+        config_directory=settings['config_directory'],
         dft_validation_folder = settings.get('dft_validation_folder', None),
     )
 

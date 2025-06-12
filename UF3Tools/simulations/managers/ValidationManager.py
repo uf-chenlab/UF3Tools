@@ -12,7 +12,6 @@ from ..validations.PotentialValidation import ValidationData
 from ..validations.FormationEnergyValidation import FormationEnergyValidation
 from ..validations.EnergyPerAtomValidation import EnergyPerAtomValidation
 from ..simulations.Simulation import BaseSingleCrystalSimulation, BaseSimulation
-from .LammpsSimulationFileManager import LammpsSimulationFileManager
 from ...common.LAMMPSModifier import LAMMPSModifier
 class ValidationManager:
     validation_lut = {
@@ -51,8 +50,9 @@ class ValidationManager:
         'energy_per_atom': "dft/simulations/EnergyPerAtomSimulation/results.txt"
     }
 
-    def __init__(self, potential_version, structure_id, potential_file, lammps_model_file, dft_model_file, element_list, validation_folder_path, dft_validation_folder = None, validations_to_run=None, kwargs=None):
+    def __init__(self, potential_version, structure_id, potential_file, lammps_model_file, dft_model_file, element_list, config_directory, validation_folder_path, dft_validation_folder = None, validations_to_run=None, kwargs=None):
         self.potential_file = os.path.abspath(potential_file)
+        self.config_directory = os.path.abspath(config_directory)
         self.lammps_model_file = os.path.abspath(lammps_model_file)
         self.dft_model_file = os.path.abspath(dft_model_file)
         print(f'validation folder path: {validation_folder_path}')
@@ -72,8 +72,8 @@ class ValidationManager:
         self.single_crystal_data = None
         self.lammps_directory = os.path.join(self.validation_folder_path, "lammps")
         self.lammps_simulation_root_directory = os.path.join(self.lammps_directory, "simulations")
-        self.template_directory = os.path.join(self.lammps_directory, "templates")
-        self.basic_files_directory = os.path.join(self.lammps_directory, "basic_files")
+        self.template_directory = os.path.join(self.config_directory, "lammps", "templates")
+        self.basic_files_directory = os.path.join(self.config_directory, "lammps", "basic_files")
         self.run_scripts = {
             'lammps': os.path.join(self.basic_files_directory, "start_simulation_hpg.sh"),
             'dft': os.path.join(self.basic_files_directory, "start_simulation_dft.sh")

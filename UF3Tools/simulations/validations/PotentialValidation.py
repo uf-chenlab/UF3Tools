@@ -1,8 +1,6 @@
 import os 
 import shutil 
 import numpy as np
-from ..managers.DFTSimulationManager import DFTSimulationManager
-from ..managers.LammpsSimulationFileManager import LammpsSimulationFileManager  
 from ..common.LammpsInputFileHandler import LammpsInputFileHandler 
 import ast
 

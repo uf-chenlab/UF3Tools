@@ -92,7 +92,7 @@ class ModelAutomater:
                 "elastic_tensor": True,
                 "surface_energy": True
             }
-        
+        self.config_directory = os.path.join(os.getcwd(), "config")
         #init variables
         self.feature_batch_size = 500
         self.data_coordinator = io.DataCoordinator()
@@ -186,12 +186,10 @@ class ModelAutomater:
             
             
             os.path.join(base_path, "validation", "lammps"),
-            os.path.join(base_path, "validation", "lammps", "basic_files"),
             os.path.join(base_path, "validation", "lammps", "simulations"),
             os.path.join(base_path, "validation", "lammps", "simulations", "ElasticTensor"),
             os.path.join(base_path, "validation", "lammps", "simulations", "RelaxationSimulation"),
             os.path.join(base_path, "validation", "lammps", "simulations", "SurfaceEnergySimulation"),
-            os.path.join(base_path, "validation", "lammps", "templates"),
             
             # We only create the top-level structures folder,
             # no sub-directories inside structures.
@@ -199,12 +197,10 @@ class ModelAutomater:
         ]
         dft_directories = [
             os.path.join(base_path, "validation", "dft"),
-            os.path.join(base_path, "validation", "dft", "basic_files"),
             os.path.join(base_path, "validation", "dft", "simulations"),
             os.path.join(base_path, "validation", "dft", "simulations", "ElasticTensor"),
             os.path.join(base_path, "validation", "dft", "simulations", "RelaxationSimulation"),
             os.path.join(base_path, "validation", "dft", "simulations", "SurfaceEnergySimulation"),
-            os.path.join(base_path, "validation", "dft", "templates"),
         ]
         if self.validation_folder is not None:
             directories.append(dft_directories)

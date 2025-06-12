@@ -107,7 +107,7 @@ class ElasticTensorSimulation(CompleteLammpsSimulation):
                     lammps_data["shear_modulus_hill"] = float(shear_modulus_hill_match.group(1))
                 
                 poisson_match = poisson_ratio_pattern.search(line)
-                if bulk_modulus_match:
+                if poisson_match:
                     lammps_data["poisson_ratio"] = float(poisson_match.group(1))
 
             # Store the elastic tensor as a dictionary
