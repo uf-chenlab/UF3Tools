@@ -13,6 +13,14 @@ class LAMMPSModifier:
     def load_structure_from_file(self):
         """Loads structure from a LAMMPS data file."""
         return LammpsData.from_file(self.lammps_file, atom_style=self.atom_style).structure
+    def get_structure(self):
+        """Returns the structure loaded from the LAMMPS data file."""
+        return self.structure
+    def get_lammps_file(self):
+        return self.lammps_file
+    def get_lattice(self):
+        """Returns the lattice of the structure."""
+        return self.structure.lattice if self.structure else None
     def get_elements(self):
         """Returns a space-separated string of element symbols present in the structure."""
         elements = sorted(set(site.specie.symbol for site in self.structure))

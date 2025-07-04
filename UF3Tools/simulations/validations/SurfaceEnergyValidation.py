@@ -6,7 +6,7 @@ class SurfaceEnergyValidation(PotentialValidation):
     def get_required_base_simulations(cls):
         return None
     computational_weight=2
-    required_supercell = (1,1,6)
+    required_supercell = (2,2,6)
     def __init__(self, potential_file, lammps_model_file, dft_model_file, element_list, validation_folder_path, run_scripts, template_directory, parameters=None):
         abs_validation_path = os.path.abspath(validation_folder_path)
         super().__init__(

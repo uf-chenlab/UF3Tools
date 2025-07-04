@@ -40,6 +40,12 @@ from UF3Tools.simulations.validations.CohesiveEnergyValidation import CohesiveEn
 from UF3Tools.common.MPAPIKey import MP_API_KEY
 from UF3Tools.common.StructureDownloader import StructureDownloader
 from UF3Tools.common.LAMMPSModifier import LAMMPSModifier
+from ase.neighborlist import neighbor_list
+from ase.geometry import get_distances
+from sklearn.neighbors import NearestNeighbors, KNeighborsRegressor, LocalOutlierFactor
+from sklearn.linear_model import Ridge
+from sklearn.metrics.pairwise import cosine_similarity
+import numpy as np
 class UF3FileHandler:
     def __init__(self, path):
         self.path = path
@@ -239,7 +245,37 @@ class DataParser:
         if parsed_files > 0:
             self.data = self.data_coordinator.consolidate()
             self.check_and_convert_indices()
-                          
+            self.check_pair_distances(threshold=0.1)
+    def check_pair_distances(self, threshold=0.1):
+        """
+        Check for unphysically close atomic pairs in the geometries stored in the DataFrame.
+        
+        :param threshold: Distance threshold below which pairs are considered unphysically close.
+        """
+        if 'geometry' not in self.data.columns:
+            print("No geometry data available to check pair distances.")
+            return
+        
+        def has_close_pairs(atoms):
+            try:
+                # Compute full distance matrix using PBC
+                dists = atoms.get_all_distances(mic=True)
+                np.fill_diagonal(dists, np.inf)  # Ignore self-pairs
+                return np.any(dists < threshold)
+            except Exception as e:
+                print(f"Error processing atoms: {e}")
+                return False
+
+        close_pair_indices = []
+        for idx, row in self.data.iterrows():
+            if has_close_pairs(row['geometry']):
+                close_pair_indices.append(idx)
+
+        if close_pair_indices:
+            print(f"Warning: Found {len(close_pair_indices)} structures with unphysically close atomic pairs (distance < {threshold} Å).")
+            print("Affected indices:", close_pair_indices)
+        else:
+            print("No unphysically close atomic pairs found.")                        
     def check_and_convert_indices(self):
         """
         Check if the DataFrame indices are in the correct format (ind_#_run_#__#).
@@ -986,7 +1022,6 @@ class DataFilter:
             return
 
         # Prepare the data matrix for SVD
-        print(set(columns))
         if columns is None:
             temp_df = self.data.select_dtypes(include=np.number).copy()
         
@@ -1057,6 +1092,149 @@ class DataFilter:
             self.data = self.data.iloc[selected_indices]
 
         print(f"Filtered data length after CUR subsampling: {len(self.data)}")
+    def filter_min_pair_distance(self, threshold):
+        print(f"Filtering structures with any pair distance below {threshold} Å")
+        
+        def has_close_pair(atoms):
+            try:
+                # this gets full distance matrix using PBC
+                dists = atoms.get_all_distances(mic=True)
+                np.fill_diagonal(dists, np.inf)  # ignore self-pairs
+                return np.any(dists < threshold)
+            except Exception as e:
+                print(f"Error checking distances: {e}")
+                return True  # default to removing if error occurs
+        
+        self.data = self.data[~self.data['geometry'].apply(has_close_pair)]
+    
+    #------------ feature based filters ----------------#
+class DataFeatureFilter:
+    def __init__(self, df: pd.DataFrame, non_features=None):
+        self.data = df.copy()
+        self.non_features = non_features or {"y", "n_Al", "n_N", "n_Ga"}
+
+    def _get_feature_cols(self):
+        non_feats = set(self.non_features)
+        non_feats.update([c for c in self.data.columns if c.startswith("n_")])
+        return [c for c in self.data.select_dtypes(include=[np.number]).columns if c not in non_feats]
+
+    def _get_energy_rows(self):
+        return self.data[self.data.index.get_level_values(-1) == 'energy']
+
+    def _get_force_vectors(self):
+        idx = self.data.index.get_level_values(0)
+        fx = self.data[self.data.index.get_level_values(1).str.startswith("fx_")]['y'].groupby(idx).apply(np.array)
+        fy = self.data[self.data.index.get_level_values(1).str.startswith("fy_")]['y'].groupby(idx).apply(np.array)
+        fz = self.data[self.data.index.get_level_values(1).str.startswith("fz_")]['y'].groupby(idx).apply(np.array)
+        return fx, fy, fz
+
+    def filter_conflicting_by_feature(self, k=5, z_thresh=3.0):
+        energy_df = self._get_energy_rows()
+        features = energy_df[self._get_feature_cols()].values
+        energy = energy_df['y'].values
+        if len(energy_df) <= k:
+            print("Too few data points for conflict filtering.")
+            return
+
+        nn = NearestNeighbors(n_neighbors=k + 1).fit(features)
+        _, neighbors = nn.kneighbors(features)
+
+        flagged = []
+        idx = energy_df.index
+        for i, nbrs in enumerate(neighbors):
+            nbrs = nbrs[1:]
+            local = energy[nbrs]
+            mu, sigma = local.mean(), local.std()
+            if sigma == 0:
+                continue
+            z = abs(energy[i] - mu) / sigma
+            if z > z_thresh:
+                flagged.append(idx[i][0])  # drop entire structure
+
+        print(f"Removed {len(flagged)} conflicting neighbors.")
+        self.data = self.data[~self.data.index.get_level_values(0).isin(flagged)]
+
+    def filter_model_residuals(self, z_thresh=3.0):
+        energy_df = self._get_energy_rows()
+        X = energy_df[self._get_feature_cols()].values
+        y = energy_df['y'].values
+
+        model = Ridge()
+        model.fit(X, y)
+        pred = model.predict(X)
+        resid = y - pred
+        z = (resid - resid.mean()) / resid.std()
+        keep_mask = np.abs(z) < z_thresh
+        keep_ids = energy_df.index.get_level_values(0)[keep_mask]
+
+        print(f"Removed {(~keep_mask).sum()} high-residual structures.")
+        self.data = self.data[self.data.index.get_level_values(0).isin(keep_ids)]
+
+    def filter_force_norm_outliers(self, z_thresh=3.0):
+        fx, fy, fz = self._get_force_vectors()
+        norms = np.sqrt((fx**2 + fy**2 + fz**2).mean(axis=1))
+        z = (norms - norms.mean()) / norms.std()
+        keep = np.abs(z) < z_thresh
+        keep_ids = fx.index[keep]
+
+        print(f"Removed {(~keep).sum()} force-norm outliers.")
+        self.data = self.data[self.data.index.get_level_values(0).isin(keep_ids)]
+
+    def filter_duplicates_by_feature(self, tol=1e-5):
+        energy_df = self._get_energy_rows()
+        features = energy_df[self._get_feature_cols()].round(decimals=int(-np.log10(tol)))
+        mask = ~features.duplicated()
+        keep_ids = energy_df.index.get_level_values(0)[mask]
+        print(f"Removed {(~mask).sum()} near-duplicate structures.")
+        self.data = self.data[self.data.index.get_level_values(0).isin(keep_ids)]
+    def filter_lof_outliers(self, contamination=0.01):
+        energy_df = self._get_energy_rows()
+        X = energy_df[self._get_feature_cols()].values
+
+        lof = LocalOutlierFactor(n_neighbors=20, contamination=contamination)
+        mask = lof.fit_predict(X) == 1
+
+        keep_ids = energy_df.index.get_level_values(0)[mask]
+        print(f"Removed {(~mask).sum()} LOF outliers.")
+        self.data = self.data[self.data.index.get_level_values(0).isin(keep_ids)]
+    def filter_energy_smoothness_features(self, k=5, resid_thresh=0.1):
+        energy_df = self._get_energy_rows()
+        X = energy_df[self._get_feature_cols()].values
+        y = energy_df['y'].values
+
+        knn = KNeighborsRegressor(n_neighbors=min(k, len(energy_df)-1))
+        knn.fit(X, y)
+        pred = knn.predict(X)
+
+        resid = np.abs(y - pred)
+        mask = resid < resid_thresh
+        keep_ids = energy_df.index.get_level_values(0)[mask]
+
+        print(f"Removed {(~mask).sum()} based on local energy smoothness.")
+        self.data = self.data[self.data.index.get_level_values(0).isin(keep_ids)]
+    def filter_energy_order_conflicts_features(self, sim_thresh=1e-3, margin=0.1):
+        energy_df = self._get_energy_rows()
+        X = energy_df[self._get_feature_cols()].values
+        y = energy_df['y'].values
+        sim = cosine_similarity(X)
+
+        n = len(y)
+        bad_idx = set()
+        idx = energy_df.index.get_level_values(0).to_numpy()
+
+        for i in range(n):
+            for j in range(i + 1, n):
+                if sim[i, j] > (1 - sim_thresh):
+                    if y[i] > y[j] + margin:
+                        bad_idx.add(idx[i])
+                    elif y[j] > y[i] + margin:
+                        bad_idx.add(idx[j])
+
+        print(f"Removed {len(bad_idx)} energy order conflict points.")
+        self.data = self.data[~self.data.index.get_level_values(0).isin(bad_idx)]
+
+
+
 
 
 class Featurizer:
@@ -1341,8 +1519,8 @@ class ModelTrainer:
         self.model.fit_from_files_parallel(filenames, self.train_keys, weight=weight, batch_size=batch_size, energy_key='energy', num_cores=num_cores, progress='bar', sample_weights=sample_weights)
     def load_fitting_data(self, filenames, num_cores=1, use_cur=False):
         return self.model.load_tables_parallel(filenames=filenames, subset=self.train_keys, num_cores=num_cores, progress='bar', use_cur=use_cur)
-    def fit_from_dataframe(self, df, weight=0.3, batch_size=500, num_cores=1, sample_weights=None, exclude_elements=None):
-        self.model.fit_from_dataframe_parallel(df, self.train_keys, weight=weight, batch_size=batch_size, energy_key='energy', num_cores=num_cores, progress='bar', sample_weights=sample_weights, exclude_elements=exclude_elements)
+    def fit_from_dataframe(self, df, weight=0.3, batch_size=500, num_cores=1, sample_weights=None, exclude_elements=None, outlier_config=None):
+        self.model.fit_from_dataframe_parallel(df, self.train_keys, weight=weight, batch_size=batch_size, energy_key='energy', num_cores=num_cores, progress='bar', sample_weights=sample_weights, exclude_elements=exclude_elements, outlier_config=outlier_config)
     def fit_by_interaction(self, interaction, filenames, weight=0.3, batch_size=500, num_cores=1, sample_weights=None):
         self.model.fit_by_interaction(filenames, self.train_keys, target_interactions=interaction, weight=weight, batch_size=batch_size, energy_key='energy', num_cores=num_cores, progress='bar', sample_weights=sample_weights)
     def fine_tune_from_dataframe_blend(self, df, alpha=0.05, weight=0.3, batch_size=500, num_cores=1, sample_weights=None, exclude_elements=None):

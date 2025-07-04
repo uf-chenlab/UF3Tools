@@ -11,6 +11,8 @@ import threading
 from multiprocessing import Pool
 from dask.distributed import Client
 from dask_jobqueue import SLURMCluster
+import uuid
+from datetime import datetime
 
 
 def set_cpu_affinity(core_ids):
@@ -48,7 +50,7 @@ class CoreManager:
 
 
 class ModelAutomater:
-    def __init__(self, directories, run_data_path, feature_filename, element_list, degree, chemical_system, bspline_config, data_folder=None, num_cores=1):
+    def __init__(self, directories, run_data_path, feature_filename, element_list, degree, chemical_system, bspline_config, data_folder=None, num_cores=1, filtered_directory=None):
          # Class-wide LUT for filter types to corresponding methods
         self.FILTER_FUNCTION_LUT = {
             'composition': 'filter_composition',
@@ -67,6 +69,7 @@ class ModelAutomater:
             'subsample':'filter_kmeans_subsample',
             'uf3_subsample':'filter_farthest_point_subsample',
             'cur_subsample': 'filter_cur_subsample',
+            'min_pair_distance': 'filter_min_pair_distance',
             'none': 'get_data'
             # Add new filters here as needed
         }
@@ -84,7 +87,17 @@ class ModelAutomater:
         self.data_folder = data_folder if data_folder is not None else self.base_directory
         print("data folder is: ", self.data_folder)
         self.pickle_directory = os.path.join(self.data_folder , 'data/pickle_files/')
-        self.filter_directory = os.path.join(self.data_folder , 'data/pickle_files/filtered/')
+        filtered_root = os.path.join(self.data_folder, 'data', 'pickle_files', 'filtered')
+        os.makedirs(filtered_root, exist_ok=True)
+        if filtered_directory is not None:
+            self.filter_directory = filtered_directory
+            os.makedirs(self.filter_directory, exist_ok=True)
+        else:
+            temp_name = uuid.uuid4().hex[:8]
+            self.temp_filter_dir = os.path.join(filtered_root, temp_name)
+            os.makedirs(self.temp_filter_dir, exist_ok=False)
+            
+            self.filter_directory = self.temp_filter_dir
         self.feature_directory = os.path.join(self.data_folder , 'data/featurized/')
         self.validations_to_run = {
                 "lattice_constant": True,
@@ -121,6 +134,11 @@ class ModelAutomater:
         self.fitting_df = None
         self.fitting_features = None
         self.trainer=None
+    def set_filtered_directory(self, directory):
+        self.filter_directory = directory
+        os.makedirs(self.filter_directory, exist_ok=True)
+    def get_filtered_directory(self):
+        return self.filter_directory
     def set_fitting_df(self, fitting_df):
         self.fitting_df = fitting_df
     def get_fitting_df(self):
@@ -156,6 +174,8 @@ class ModelAutomater:
         return self.chemical_system
     def get_maps(self):
         return self.bspline_config  
+    def get_data_folder(self):
+        return self.data_folder
     def get_bspline_config(self):
         return self.bspline_config
     def get_element_list(self):
@@ -212,6 +232,7 @@ class ModelAutomater:
         """
         Load existing data from the specified directory, ignoring files that match data types in data_ignore_list.
         """
+        print("loading from directory: ", directory)
         data_parser = DataParser(directory, self.data_coordinator)
         data_files = {}
         local_data_labels = []
@@ -222,7 +243,7 @@ class ModelAutomater:
                 data_type = data_type.replace('_filtered', '')
                 if data_type in self.data_ignore_list:
                     continue
-                data_parser.load_from_pickle(directory + file)
+                data_parser.load_from_pickle(os.path.join(directory, file))
                 data_files[file] = data_parser.get_data()
                 local_data_labels.append(file)
         return data_files, local_data_labels
@@ -504,7 +525,7 @@ class ModelAutomater:
                 return
             data = self.base_data_frames[data_filename]
             # Check for the appropriate data columns
-            if data_type == 'structure':
+            if 'structure' in data_type:
                 if not self.check_structure_data(data):
                     data = self.repair_structure_data(data)
                     self.replace_existing_data(data_filename, data)
@@ -633,11 +654,12 @@ class ModelAutomater:
             self.filtered_data_labels.append(label)
     def consolidate_data_return(self):
         """
-        Consolidate all data into a single DataFrame for training/testing, ignoring data types in data_ignore_list.
+        Consolidate all data into a single DataFrame for training/testing,
+        skipping types in data_ignore_list. Removes exact duplicates by index.
+        Raises error if same index is used with conflicting content.
         """
         consolidated_data = pd.DataFrame()
         for label, data in self.filtered_data_frames.items():
-            # Remove '.pkl', '_filtered', and '_rebalanced' suffixes
             data_type = label.replace('.pkl', '').replace('_filtered', '').replace('_rebalanced', '')
             if data_type in self.data_ignore_list:
                 continue
@@ -645,8 +667,20 @@ class ModelAutomater:
             data["source_dataset"] = data_type
             print(f"adding {data_type} data with length {len(data)}")
             consolidated_data = pd.concat([consolidated_data, data], ignore_index=False)
+
+        # check for duplicate indices
+        duplicated_indices = consolidated_data.index[consolidated_data.index.duplicated()].unique()
+        if len(duplicated_indices) > 0:
+            for idx in duplicated_indices:
+                rows = consolidated_data.loc[[idx]]
+                if not rows.eq(rows.iloc[0]).all(axis=None):
+                    raise ValueError(f"Conflicting data found at index {idx}")
+            # drop exact duplicates
+            consolidated_data = consolidated_data[~consolidated_data.index.duplicated(keep='first')]
+
         print(f"Consolidated data length: {len(consolidated_data)}")
         return consolidated_data
+
     def consolidate_data(self):
         """
         Consolidate all data into a single DataFrame for training/testing, ignoring data types in data_ignore_list.
@@ -662,7 +696,9 @@ class ModelAutomater:
         return data.index.to_series().apply(lambda x: x.lower().split('_run')[0]).unique()
     def split_data(self, test_percent=0.2, filter_index=True, unique_indices=True, exclude_list=None):
         # Separate excluded data first
-        if exclude_list:
+        if self.model_data.empty:
+            raise ValueError("Model data is empty. Please consolidate data before splitting.")
+        if exclude_list and "source_dataset" in self.model_data.columns:
             excluded_data = self.model_data[self.model_data["source_dataset"].isin(exclude_list)]
             included_data = self.model_data[~self.model_data["source_dataset"].isin(exclude_list)]
             print(f"Excluded from test split: {exclude_list} — {len(excluded_data)} rows")
@@ -886,12 +922,12 @@ class ModelAutomater:
         self.fitting_df.drop(columns=drop_columns, inplace=True)
         self.fitting_features = features
         return self.chemical_system, self.fitting_df, trainer.get_bspline_config(), features
-    def train_model_from_df(self, model_filename, training_data, testing_data, regularizer, weight=0.3, batch_size=500, num_cores=1, sample_weights=None, exclude_elements=None):
+    def train_model_from_df(self, model_filename, training_data, testing_data, regularizer, weight=0.3, batch_size=500, num_cores=1, sample_weights=None, exclude_elements=None, outlier_config=None):
         sample_weights_final = self.fill_sample_weights(sample_weights)
         trainer = ModelTrainer(self.model_data, self.chemical_system, self.bspline_config, regularizer)
         trainer.set_training_set(training_data)
         trainer.set_testing_set(testing_data)
-        trainer.fit_from_dataframe(self.fitting_df, weight=weight, batch_size=batch_size, num_cores=num_cores,sample_weights=sample_weights_final if sample_weights is not None else None, exclude_elements=exclude_elements)
+        trainer.fit_from_dataframe(self.fitting_df, weight=weight, batch_size=batch_size, num_cores=num_cores,sample_weights=sample_weights_final if sample_weights is not None else None, exclude_elements=exclude_elements, outlier_config=outlier_config)
         trainer.export_model(model_filename)
         return self.chemical_system, trainer.get_model(), trainer.get_bspline_config(), None, model_filename, trainer
     def fine_tune_model_from_dataframe_blend(self, trainer, model_filename, training_data, testing_data, regularizer, weight=0.3, batch_size=500, num_cores=1, sample_weights=None, exclude_elements=None, alpha=0.05):

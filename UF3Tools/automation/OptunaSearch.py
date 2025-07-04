@@ -123,12 +123,20 @@ class UF3AbstractOptunaTrainer():
             "degree": self.automater.get_degree(),
             "chemical_system": self.automater.get_chemical_system(),
             "bspline_config": self.automater.get_bspline_config(),
-            "num_cores": self.settings['cores_per_job']
+            "data_folder": self.automater.get_data_folder(),
+            "num_cores": self.settings['cores_per_job'],
+            "filtered_directory": self.automater.get_filtered_directory(),
         }
+        print("automater args: ", automater_args)
         self.settings['ignore_list'] = self.automater.get_ignore_list()
         if self.settings.get('trainer') is None:
             self.settings['trainer'] = self.automater.get_trainer()
+        
 
+        dask.config.set({
+            "distributed.scheduler.worker-ttl": "600 minutes",
+            "distributed.client.heartbeat": "60s"
+        })
         self.cluster = SLURMCluster(
             account=self.settings['account'],
             cores=self.settings['cores_per_job'],
@@ -139,7 +147,7 @@ class UF3AbstractOptunaTrainer():
             log_directory=self.automater.get_base_directory(),
         )
 
-        self.client = Client(self.cluster, heartbeat_interval=30000, timeout=9999999999)
+        self.client = Client(self.cluster, heartbeat_interval=30000, timeout=86400)
         self.cluster.scale(self.settings['n_workers'])
         self.client.wait_for_workers(self.settings['n_workers'])
 
@@ -604,7 +612,7 @@ class UF3OptunaTPETrainer(UF3AbstractOptunaTrainer):
 class UF3OptunaTPEFineTuningTrainer(UF3AbstractOptunaTrainer):
     def __init__(self, base_directory, automater, settings, job_params, model_path):
         super().__init__(base_directory, automater, settings, job_params)
-        self.model_path = model_path
+        self.model_path = os.path.abspath(model_path)
 
     def run(self, temp_search=False):
         self.init_workers()
