@@ -1,14 +1,37 @@
 from .PotentialValidation import *
 from ..simulations.ElasticTensorSimulation import ElasticTensorSimulation
+import os
+import shutil
 
 class ElasticTensorValidation(PotentialValidation):
+
+    required_supercell = (2, 2, 2)  # Default for 3D, will become 2 2 1 for 2D materials 
+
     @classmethod
-    def get_required_base_simulations(cls):
-        return None
-    computational_weight=2
-    required_supercell = (2,2,2)
+    def get_required_supercell(cls):
+        # Try to infer validation folder path from a reasonable default or just use (2,2,2)
+        import inspect
+        caller_self = inspect.stack()[1].frame.f_locals.get('self', None)
+        if caller_self:
+            folder_path = getattr(caller_self, "validation_folder_path", None)
+            if folder_path and os.path.exists(os.path.join(folder_path, "2D_material")):
+                print("[ElasticTensorValidation] Detected 2D material — using (2,2,1)")
+                return (2, 2, 1)
+        return (2, 2, 2)
+
+    
+    computational_weight = 2
+
     def __init__(self, potential_file, lammps_model_file, dft_model_file, element_list, validation_folder_path, run_scripts, template_directory, parameters=None):
         abs_validation_path = os.path.abspath(validation_folder_path)
+        self.validation_folder_path = abs_validation_path
+
+        
+        if os.path.exists(os.path.join(self.validation_folder_path, "2D_material")):
+            self.required_supercell = (2, 2, 1)
+        else:
+            self.required_supercell = (2, 2, 2)
+
         super().__init__(
             "ElasticTensorSimulation",
             potential_file,
@@ -19,6 +42,7 @@ class ElasticTensorValidation(PotentialValidation):
             run_scripts,
             use_dft=False
         )
+
         print(f'parameters: {parameters}')
         self.default_kwargs = {
             "min_style": "cg",
@@ -43,12 +67,10 @@ class ElasticTensorValidation(PotentialValidation):
         self.lammps_model_file = os.path.abspath(lammps_model_file)
         self.use_dft = False
 
-        self.sim_template_file = os.path.join(
-            template_directory,
-            "in.elastic"
-        )
+        self.sim_template_file = os.path.join(template_directory, "in.elastic")
         self.input_file = "lammps.in"
         print("self lammps model file: ", self.lammps_model_file)
+
         self.simulation = ElasticTensorSimulation(
             self.sim_template_file,
             self.lammps_model_file,
@@ -57,8 +79,17 @@ class ElasticTensorValidation(PotentialValidation):
             run_scripts['lammps'],
             parameters=parameters
         )
-        self.setup_input_file(os.path.join(self.simulation.get_directory(), self.sim_template_file), os.path.join(self.simulation.get_directory(), self.input_file), self.simulation.get_parameters())
-        shutil.copy(os.path.join(self.simulation.get_directory(), "in.elastic"), os.path.join(self.simulation.get_directory(), "lammps.in"))
+
+        self.setup_input_file(
+            os.path.join(self.simulation.get_directory(), self.sim_template_file),
+            os.path.join(self.simulation.get_directory(), self.input_file),
+            self.simulation.get_parameters()
+        )
+        shutil.copy(
+            os.path.join(self.simulation.get_directory(), "in.elastic"),
+            os.path.join(self.simulation.get_directory(), "lammps.in")
+        )
+
     def retrieve_dft_result(self, path):
         from ..common.DFTDataParser import DFTDataParser
         print(f'path: {path}')
@@ -68,7 +99,35 @@ class ElasticTensorValidation(PotentialValidation):
         self.dft_data = dft_parser.get_elastic_tensor(abs_path)
         print(f'dft data: {self.dft_data}')
         self.has_dft_data = True
-        
+
+    
+
+
+    
+    def get_box_length_z(self):
+        """Parse zlo zhi from LAMMPS data file and return box height in nanometers."""
+        with open(self.lammps_model_file, 'r') as f:
+            for line in f:
+                if "zlo zhi" in line:
+                    parts = line.strip().split()
+                    zlo = float(parts[0])
+                    zhi = float(parts[1])
+                    return (zhi - zlo) * 0.1  # convert from Å to nm
+        raise RuntimeError("Could not find 'zlo zhi' line in the LAMMPS model file.")
+
+    def convert_lammps_elastic_tensor_to_2d(self, tensor_3d, thickness_nm):
+        """Convert all LAMMPS elastic constants from GPa to N/m using box thickness."""
+        tensor_2d = {}
+        for key, value in tensor_3d.items():
+            if value is not None:
+                tensor_2d[key] = value * thickness_nm  # GPa * nm = N/m
+            else:
+                tensor_2d[key] = None
+        return tensor_2d
+
+    
+
+
     def extract_independent_elastic_constants(self, elastic_tensor):
         """
         Determines the crystal structure type based on the symmetry of the elastic tensor 
@@ -90,6 +149,27 @@ class ElasticTensorValidation(PotentialValidation):
         C55 = elastic_tensor.get("C55all", None)
         C66 = elastic_tensor.get("C66all", None)
 
+
+        # # **2D Material**: 3 independent constants (C11, C12, C66)  ## all i want to do is is say that if C11, C12, and C66 are present and only present (other values are none or 0) then it is a 2D material
+        # if C11 and C12 and C66 and all(x is not None for x in [C11, C12, C66]):
+        #     return "2D Material", {
+        #         "C11": C11,
+        #         "C12": C12,
+        #         "C66": C66,
+        #     }
+        
+         # **2D Material**: Only C11, C12, and C66 are defined
+        if all(x is not None and abs(x) > 1e-8 for x in [C11, C12, C66]) and all(
+            x is None or abs(x) < 1e-8
+            for x in [C13, C22, C23, C33, C44, C55]
+        ):
+            return "2D Material", {
+                "C11": C11,
+                "C12": C12,
+                "C66": C66,
+            }
+
+        
         # **Cubic**: 3 independent constants
         # Conditions: C11 = C22 = C33, C12 = C13 = C23, C44 = C55 = C66
         if (C11 == C22 == C33) and (C12 == C13 == C23) and (C44 == C55 == C66):
@@ -99,6 +179,7 @@ class ElasticTensorValidation(PotentialValidation):
                 "C44": C44,
             }
 
+ 
         # **Hexagonal/Wurtzite**: 5 independent constants
         # Conditions: C11 = C22, C13 = C23, C44 = C55, and C66 = (C11 - C12) / 2
         elif (C11 == C22) and (C13 == C23) and (C44 == C55) and (C66 == (C11 - C12) / 2):
@@ -173,6 +254,28 @@ class ElasticTensorValidation(PotentialValidation):
                 self.lammps_results = self.lammps_results[0]
 
             lammps_elastic_tensor = self.lammps_results["elastic_tensor"]
+
+            # Convert LAMMPS elastic tensor from GPa to N/m for 2D materials
+            # # This is necessary because LAMMPS outputs elastic constants in GPa,
+            # # while we need them in N/m for 2D materials.
+            # Convert to 2D units if needed
+# Convert to 2D units if needed
+            if os.path.exists(os.path.join(self.validation_folder_path, "2D_material")):
+                print("Converting LAMMPS elastic constants from GPa to N/m for 2D comparison")
+                thickness_nm = self.get_box_length_z()
+                self.lammps_results["elastic_tensor"] = self.convert_lammps_elastic_tensor_to_2d(
+                    self.lammps_results["elastic_tensor"], thickness_nm
+                )
+                for key in ["bulk_modulus_voigt", "bulk_modulus_reuss", "bulk_modulus_hill",
+                            "shear_modulus_voigt", "shear_modulus_reuss", "shear_modulus_hill"]:
+                    if self.lammps_results[key] is not None:
+                        self.lammps_results[key] *= thickness_nm
+
+            # Now assign converted tensor
+            lammps_elastic_tensor = self.lammps_results["elastic_tensor"]
+
+
+            
             print(f'lammps elastic tensor: {lammps_elastic_tensor}')
             
             for key in dft_elastic_tensor_dict:
