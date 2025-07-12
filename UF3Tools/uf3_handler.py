@@ -586,15 +586,17 @@ class StructureParser:
         self.append_energy_per_atom()
         self.filter_epa(epa_filter)
         if(phase_diagram == True):
-            pde_entries = self.get_pde_entries(self.data)
-            self.cpd = PhaseDiagram(pde_entries)
+            
             self.append_phase_diagram_energy()
             self.append_energy_above_hull()
         
-            element_list = self.get_element_list()
+            
             print(f"Elements in phase diagram: {element_list}")
-            for element in element_list:
-                self.append_element_fraction(element)
+        # pde_entries = self.get_pde_entries(self.data)
+        # self.cpd = PhaseDiagram(pde_entries)
+        element_list = self.get_element_list()
+        for element in element_list:
+            self.append_element_fraction(element)
             
         return self.data
     def filter_epa(self, epa_filter):
@@ -623,12 +625,12 @@ class StructureParser:
         self.data.to_pickle(filename)
         
     def get_element_list(self):
-        """
-        Get the list of elements in the phase diagram.
-
-        :return: List of elements in the phase diagram.
-        """
-        return self.cpd.elements
+    # aggregate all elements from each structure
+        element_set = set()
+        for _, row in self.data.iterrows():
+            comp = self.get_composition(row)
+            element_set.update(comp.elements)
+        return sorted(list(element_set))
     def get_pdp(self):
         return self.pdp
     def get_composition(self, df_row):
@@ -1106,6 +1108,206 @@ class DataFilter:
                 return True  # default to removing if error occurs
         
         self.data = self.data[~self.data['geometry'].apply(has_close_pair)]
+    def filter_min_pair_distance_by_element(self, nn_cutoff=1.3, element='N'):
+        """
+        Removes structures that contain close element–element pairs (e.g. N–N) within nn_cutoff Å,
+        ONLY if both atoms are not near any atoms of a different type.
+
+        Parameters:
+            nn_cutoff (float): Distance threshold for same-element pairs (e.g., N–N).
+            element (str): Element to check for same-element short pairs.
+        """
+        print(f"Filtering structures with isolated {element}–{element} pairs under {nn_cutoff} Å.")
+
+        def has_isolated_short_pair(atoms):
+            try:
+                symbols = atoms.get_chemical_symbols()
+                n_indices = [i for i, sym in enumerate(symbols) if sym == element]
+                other_indices = [i for i, sym in enumerate(symbols) if sym != element]
+
+                if len(n_indices) < 2:
+                    return False
+
+                for i, idx1 in enumerate(n_indices):
+                    for idx2 in n_indices[i+1:]:
+                        dist = atoms.get_distance(idx1, idx2, mic=True)
+                        if dist < nn_cutoff:
+                            # Check if either atom is near a different-type atom
+                            near_other_1 = any(atoms.get_distance(idx1, j, mic=True) < nn_cutoff for j in other_indices)
+                            near_other_2 = any(atoms.get_distance(idx2, j, mic=True) < nn_cutoff for j in other_indices)
+                            if not near_other_1 and not near_other_2:
+                                return True  # Both are isolated and close together — likely gas
+                return False
+            except Exception as e:
+                print(f"Error in N–N filter: {e}")
+                return True
+
+        self.data = self.data[~self.data['geometry'].apply(has_isolated_short_pair)]
+        print("Filtered structures with isolated short same-element pairs.")
+
+    def filter_isolated_atoms(self, 
+                          target_element='N', 
+                          host_element='Al',
+                          max_host_distance=3.5,
+                          neighbor_radius=2.5,
+                          min_neighbors=2):
+        """
+        Removes structures where any target atom is isolated:
+        - Farther than `max_host_distance` from all host atoms
+        - AND has fewer than `min_neighbors` atoms (any type) within `neighbor_radius`
+        
+        Parameters:
+            target_element (str): Element to check for isolation (e.g. 'N')
+            host_element (str): Element considered as anchor (e.g. 'Al')
+            max_host_distance (float): Max allowed distance to any host atom
+            neighbor_radius (float): Radius to count local neighbors
+            min_neighbors (int): Minimum number of neighbors within the radius
+        """
+        print(f"Filtering structures with isolated {target_element} atoms.")
+
+        def has_isolated_atoms(atoms):
+            try:
+                symbols = atoms.get_chemical_symbols()
+                positions = atoms.get_positions()
+                cell = atoms.get_cell()
+                pbc = atoms.get_pbc()
+
+                t_indices = [i for i, s in enumerate(symbols) if s == target_element]
+                h_indices = [i for i, s in enumerate(symbols) if s == host_element]
+
+                if len(t_indices) == 0 or len(h_indices) == 0:
+                    return False  # nothing to check
+
+                for i in t_indices:
+                    # distance to nearest host
+                    min_host_dist = np.min([atoms.get_distance(i, j, mic=True) for j in h_indices])
+                    if min_host_dist > max_host_distance:
+                        return True
+                    else:    # count neighbors of any type
+                        neighbor_count = np.sum([
+                            atoms.get_distance(i, j, mic=True) < neighbor_radius 
+                            for j in range(len(atoms)) if j != i
+                        ])
+                        if (neighbor_count < min_neighbors) and (neighbor_count > 2*min_neighbors):
+                            return True  # this target atom is isolated
+                return False
+            except Exception as e:
+                print(f"Error checking atom isolation: {e}")
+                return True
+
+        self.data = self.data[~self.data['geometry'].apply(has_isolated_atoms)]
+        print("Isolated atom filter applied.")
+    def filter_runs_by_epa_violation(self, threshold=-3.0, max_allowed=3):
+        """
+        Remove all data from runs that have more than `max_allowed` entries with EPA > threshold.
+        A run is identified by its garun_* and temp_* identifiers in the index path.
+        
+        ind_/blue/ypchen/ntaormina/uf3/AlN/gasp/garun_2_3_2025_17_6_49/temp/394_garun_2_3_2025_17_6_49_temp_394_run_OUTCAR_5_0
+
+        """
+        def get_run_key(index):
+            parts = index.split('/')
+            run_id = None
+            temp_id = None
+
+            for p in parts:
+                if p.startswith('garun_'):
+                    run_id = p
+                elif '_garun_' in p and '_temp_' in p:
+                    tokens = p.split('_')
+                    for i in range(len(tokens)):
+                        if tokens[i] == 'temp' and i > 0:
+                            try:
+                                temp_id = tokens[i + 1]
+                            except IndexError:
+                                pass
+            if run_id and temp_id:
+                return f"{run_id}_temp_{temp_id}"
+            else:
+                return None
+
+        self.data['__run_key__'] = self.data.index.to_series().apply(get_run_key)
+        print(self.data['__run_key__'])
+        epa_violators = self.data[self.data['energy_per_atom'] > threshold]
+        violator_counts = epa_violators['__run_key__'].value_counts()
+
+        drop_keys = set(violator_counts[violator_counts > max_allowed].index)
+        before = len(self.data)
+        self.data = self.data[~self.data['__run_key__'].isin(drop_keys)]
+        after = len(self.data)
+
+        self.data.drop(columns='__run_key__', inplace=True)
+
+        print(f"Removed {before - after} rows from {len(drop_keys)} violating runs.")
+    def filter_invalid_gasp_runs(self, rundata_dir):
+        """
+        Removes all rows whose temp_id is not found in any run_data_<...> file.
+        Each run_data file has a set of valid structure IDs (the 'id' column).
+        These are matched to the temp_id in the index of each row.
+        """
+
+        import os
+
+        def extract_temp_id(index):
+            parts = index.split('/')
+            for part in parts:
+                if '_temp_' in part:
+                    tokens = part.split('_')
+                    for i in range(len(tokens)):
+                        if tokens[i] == 'temp' and i + 1 < len(tokens):
+                            try:
+                                return int(tokens[i + 1])
+                            except ValueError:
+                                return None
+            return None
+
+        # collect valid IDs from all run_data_* files
+        valid_ids = set()
+        for fname in os.listdir(rundata_dir):
+            if not fname.startswith('run_data_'):
+                continue
+            path = os.path.join(rundata_dir, fname)
+
+            try:
+                with open(path, 'r') as f:
+                    lines = f.readlines()
+
+                # Find header line
+                header_idx = None
+                for i, line in enumerate(lines):
+                    if line.strip().lower().startswith('id'):
+                        header_idx = i
+                        break
+
+                if header_idx is None:
+                    raise ValueError("No 'id' header found")
+
+                # Process remaining lines
+                for line in lines[header_idx + 1:]:
+                    fields = line.strip().split()
+                    if not fields:
+                        continue
+                    try:
+                        struct_id = int(fields[0])
+                        valid_ids.add(struct_id)
+                    except ValueError:
+                        continue
+
+            except Exception as e:
+                print(f"Skipping {fname}: {e}")
+
+        self.data['__temp_id__'] = self.data.index.to_series().apply(extract_temp_id)
+
+        drop_mask = ~self.data['__temp_id__'].isin(valid_ids)
+        drop_count = drop_mask.sum()
+
+        self.data = self.data[~drop_mask]
+        self.data.drop(columns='__temp_id__', inplace=True)
+
+        print(f"Filtered {drop_count} rows with temp IDs not found in any run_data file.")
+
+
+
     
     #------------ feature based filters ----------------#
 class DataFeatureFilter:
@@ -1803,7 +2005,7 @@ class ModelAnalyzer:
             self.analyze_2b(element_list, analysis)
         for element_list in self.chemical_system.interactions_map[3]:
             self.analyze_3b(element_list, self.model)
-        self.generate_density_plot(analysis)
+        #self.generate_density_plot(analysis)
         results= self.test_model_prediction(training = training, use_elements= self.chemical_system.element_list)
         #results = self.export_prediction_data_to_dataframe()
         self.generate_parity_plots()

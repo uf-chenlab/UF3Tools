@@ -64,12 +64,16 @@ class ModelAutomater:
             'composition_range': 'filter_composition_range',
             'max_epa': 'filter_max_epa',
             'min_epa': 'filter_min_epa',
+            'max_epa_by_run': 'filter_runs_by_epa_violation',
             'unreasonable_epas': 'filter_unreasonable_epas',
             'gas': 'filter_gas',
             'subsample':'filter_kmeans_subsample',
             'uf3_subsample':'filter_farthest_point_subsample',
             'cur_subsample': 'filter_cur_subsample',
             'min_pair_distance': 'filter_min_pair_distance',
+            'min_pair_distance_by_element': 'filter_min_pair_distance_by_element',
+            'isolated_atoms': 'filter_isolated_atoms',
+            'invalid_gasp_runs': 'filter_invalid_gasp_runs',
             'none': 'get_data'
             # Add new filters here as needed
         }
@@ -413,6 +417,10 @@ class ModelAutomater:
         return self.filtered_data_labels
     def get_data(self, data_type):
         return self.filtered_data_frames[data_type]
+    def get_base_data(self, data_type):
+        return self.base_data_frames[data_type]
+    def get_all_base_data(self):
+        return self.base_data_frames, self.base_data_labels
     def get_feature_paths(self):
         return self.feature_paths
     def set_feature_paths(self, feature_paths):
@@ -669,14 +677,9 @@ class ModelAutomater:
             consolidated_data = pd.concat([consolidated_data, data], ignore_index=False)
 
         # check for duplicate indices
-        duplicated_indices = consolidated_data.index[consolidated_data.index.duplicated()].unique()
-        if len(duplicated_indices) > 0:
-            for idx in duplicated_indices:
-                rows = consolidated_data.loc[[idx]]
-                if not rows.eq(rows.iloc[0]).all(axis=None):
-                    raise ValueError(f"Conflicting data found at index {idx}")
+        #duplicated_indices = consolidated_data.index[consolidated_data.index.duplicated()].unique()
             # drop exact duplicates
-            consolidated_data = consolidated_data[~consolidated_data.index.duplicated(keep='first')]
+        consolidated_data = consolidated_data[~consolidated_data.index.duplicated(keep='first')]
 
         print(f"Consolidated data length: {len(consolidated_data)}")
         return consolidated_data
@@ -785,7 +788,35 @@ class ModelAutomater:
         self.train_keys = self.training_set.index
         print(f"Testing set size: {len(self.testing_set)}, Training set size: {len(self.training_set)}")
         return self.training_set, self.testing_set
+    def select_testing_sets(self, dataset_names, test_split_fraction=0.1, seed=42069):
+        np.random.seed(seed)
+        all_test_indices = set()
+        individual_test_splits = {}
 
+        for name in dataset_names:
+            label = f"{name}_filtered.pkl"
+            if label not in self.filtered_data_frames:
+                raise ValueError(f"Dataset {label} not found in filtered_data_frames.")
+
+            df = self.filtered_data_frames[label]
+            indices = df.index.to_numpy()
+            np.random.shuffle(indices)
+            split_idx = int(len(indices) * (1 - test_split_fraction))
+            train_idx = indices[:split_idx]
+            test_idx = indices[split_idx:]
+
+            all_test_indices.update(test_idx)
+            individual_test_splits[name] = df.loc[test_idx]
+
+        # All data in model_data is training except what's in test set
+        self.testing_set = self.model_data[self.model_data.index.isin(all_test_indices)]
+        self.training_set = self.model_data[~self.model_data.index.isin(all_test_indices)]
+
+        self.train_keys = self.training_set.index
+        self.test_keys = self.testing_set.index
+
+        print(f"Training set size: {len(self.training_set)}. Testing set size: {len(self.testing_set)}")
+        return self.training_set, self.testing_set, individual_test_splits
     def set_training_data(self, data):
         self.training_set = data
         self.train_keys = data.index
