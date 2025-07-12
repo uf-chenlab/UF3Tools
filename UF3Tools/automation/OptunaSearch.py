@@ -73,12 +73,23 @@ class AutomaterPlugin(WorkerPlugin):
             automater.download_structures(self.settings['formation_energy_structures'])
             automater.set_single_crystal_validation_structures(self.settings['formation_energy_structures'])
 
-        automater.load_fitting_data(
+        _, fitting_df, _, _ = automater.load_fitting_data(
             automater.get_training_set(),
             automater.get_testing_set(),
             batch_size=self.settings['batch_size'],
             num_cores=self.settings['cores_per_job']
         )
+        # filter_list = self.settings.get('filter_list', [])
+        # if filter_list is not None and len(filter_list) > 0:
+        #     feature_filter = DataFeatureFilter(fitting_df, non_features=self.settings.get('filter_non_features', []))
+        #     if 'conflicting' in filter_list:
+        #         feature_filter.filter_conflicting_by_feature()
+        #     if 'lof' in filter_list:
+        #         feature_filter.filter_lof_outliers()
+        #     if 'energy_smoothness' in filter_list:
+        #         feature_filter.filter_energy_smoothness_features()
+        #     if 'energy_order' in filter_list:
+        #         feature_filter.filter_energy_order_conflicts_features()
 
         # Store in worker attributes
         worker.plugins['uf3_automater'] = automater
@@ -135,18 +146,22 @@ class UF3AbstractOptunaTrainer():
 
         dask.config.set({
             "distributed.scheduler.worker-ttl": "600 minutes",
-            "distributed.client.heartbeat": "60s"
+            "distributed.client.heartbeat": "60s",
+            "distributed.worker.daemon": False
         })
         self.cluster = SLURMCluster(
             account=self.settings['account'],
             cores=self.settings['cores_per_job'],
-            processes=1,
             memory=self.settings['memory'],
             walltime=self.settings['walltime'],
-            job_extra=self.settings['extra'],
+            processes=1,
+            job_extra_directives=self.settings['extra'],
             log_directory=self.automater.get_base_directory(),
+            worker_command=self.settings['worker_command'],
+            worker_extra_args=self.settings.get('dask_worker_args', []),
+            job_script_prologue={"export DASK_DISTRIBUTED__WORKER__DAEMON=False"}
         )
-
+        print(self.cluster.job_script())
         self.client = Client(self.cluster, heartbeat_interval=30000, timeout=86400)
         self.cluster.scale(self.settings['n_workers'])
         self.client.wait_for_workers(self.settings['n_workers'])
