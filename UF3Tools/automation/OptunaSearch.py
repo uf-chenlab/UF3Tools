@@ -159,8 +159,7 @@ class UF3AbstractOptunaTrainer():
             log_directory=self.automater.get_base_directory(),
             worker_command=self.settings['worker_command'],
             worker_extra_args=self.settings.get('dask_worker_args', []),
-            job_script_prologue={"export DASK_DISTRIBUTED__WORKER__DAEMON=False"}
-        )
+            job_script_prologue=["export DASK_DISTRIBUTED__WORKER__DAEMON=False", "export MKL_THREADING_LAYER=GNU"]        )
         print(self.cluster.job_script())
         self.client = Client(self.cluster, heartbeat_interval=30000, timeout=86400)
         self.cluster.scale(self.settings['n_workers'])
@@ -207,7 +206,8 @@ class UF3AbstractOptunaTrainer():
             n_trials=self.settings.get('n_trials', 2),
             n_jobs=self.settings.get('n_workers', 2),
         )
-
+        print("num trials selected: ", self.settings.get('n_trials', 2))
+        print("num workers selected: ", self.settings.get('n_workers', 2))
         print("Best value:", study.best_value)
         print("Best params:", study.best_params)
 
@@ -569,7 +569,8 @@ class UF3OptunaTPETrainer(UF3AbstractOptunaTrainer):
             n_trials=self.settings.get('n_trials', 2),
             n_jobs=self.settings.get('n_workers', 2)
         )
-
+        print("num trials selected: ", self.settings.get('n_trials', 2))
+        print("num workers selected: ", self.settings.get('n_workers', 2))
         print("Best value:", study.best_value)
         print("Best params:", study.best_params)
 
