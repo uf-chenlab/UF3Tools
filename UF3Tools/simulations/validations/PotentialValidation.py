@@ -24,7 +24,7 @@ class PotentialValidation:
         return cls.required_single_crystal_simulations
 
     @classmethod
-    def get_required_supercell(cls):
+    def get_required_supercell(cls, lammps_model_file=None):
         return cls.required_supercell
 
     def __init__(self, simulation_type, potential_file, lammps_model_file, dft_model_file, element_list, root_directory, run_scripts, use_dft=False):

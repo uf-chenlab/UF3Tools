@@ -929,7 +929,6 @@ class DataFilter:
             (negative_df['energy_per_atom'] <= upper_fence)
         ]
         
-        # Optionally report how many rows were removed
         removed_count = len(self.data) - len(filtered_df)
         print(f"Removed {removed_count} outlier rows based on IQR filtering of energy_per_atom.")
         
@@ -1132,6 +1131,38 @@ class DataFilter:
                     for idx2 in n_indices[i+1:]:
                         dist = atoms.get_distance(idx1, idx2, mic=True)
                         if dist < nn_cutoff:
+                            return True  # Both are isolated and close together — likely gas
+                return False
+            except Exception as e:
+                print(f"Error in N–N filter: {e}")
+                return True
+
+        self.data = self.data[~self.data['geometry'].apply(has_isolated_short_pair)]
+        print("Filtered structures with isolated short same-element pairs.")
+    def filter_isolated_pair_by_element(self, nn_cutoff=1.3, element='N'):
+        """
+        Removes structures that contain close element–element pairs (e.g. N–N) within nn_cutoff Å,
+        ONLY if both atoms are not near any atoms of a different type.
+
+        Parameters:
+            nn_cutoff (float): Distance threshold for same-element pairs (e.g., N–N).
+            element (str): Element to check for same-element short pairs.
+        """
+        print(f"Filtering structures with isolated {element}–{element} pairs under {nn_cutoff} Å.")
+
+        def has_isolated_short_pair(atoms):
+            try:
+                symbols = atoms.get_chemical_symbols()
+                n_indices = [i for i, sym in enumerate(symbols) if sym == element]
+                other_indices = [i for i, sym in enumerate(symbols) if sym != element]
+
+                if len(n_indices) < 2:
+                    return False
+
+                for i, idx1 in enumerate(n_indices):
+                    for idx2 in n_indices[i+1:]:
+                        dist = atoms.get_distance(idx1, idx2, mic=True)
+                        if dist < nn_cutoff:
                             # Check if either atom is near a different-type atom
                             near_other_1 = any(atoms.get_distance(idx1, j, mic=True) < nn_cutoff for j in other_indices)
                             near_other_2 = any(atoms.get_distance(idx2, j, mic=True) < nn_cutoff for j in other_indices)
@@ -1305,6 +1336,38 @@ class DataFilter:
         self.data.drop(columns='__temp_id__', inplace=True)
 
         print(f"Filtered {drop_count} rows with temp IDs not found in any run_data file.")
+    def filter_duplicate_indices(self, keep_lowest_epa=True):
+        """
+        Remove duplicated index entries from the dataset.
+        
+        Parameters:
+            mode (str): Either 'drop_all' or 'keep_lowest_epa'.
+                        - 'drop_all': removes all rows that have a duplicate index.
+                        - 'keep_lowest_epa': keeps only the row with the lowest energy_per_atom for each index group.
+        """
+        dup_mask = self.data.index.duplicated(keep=False)
+        dup_data = self.data[dup_mask]
+        print(f"data columns: {self.data.columns}")
+
+        if dup_data.empty:
+            print("No duplicated indices found.")
+            return
+
+        print(f"Found {len(dup_data)} rows with duplicated indices.")
+
+        if keep_lowest_epa is False:
+            self.data = self.data[~self.data.index.duplicated(keep=False)]
+            print("Dropped all duplicated entries.")
+        else:
+            if 'energy_per_atom' not in dup_data.columns:
+                print("Column 'energy_per_atom' is missing. Cannot apply keep_lowest_epa.")
+                return
+
+            # keep only lowest epa for each index group
+            idx_to_keep = dup_data.groupby(dup_data.index)['energy_per_atom'].idxmin()
+            keep_mask = self.data.index.isin(idx_to_keep)
+            self.data = self.data[~dup_mask | keep_mask]
+            print(f"Kept {len(idx_to_keep)} rows with lowest EPA per duplicated index.")
 
 
 
@@ -2122,31 +2185,46 @@ class ModelAnalyzer:
         return results
     def find_problematic_data(self, energy_cutoff, force_cutoff):
         """
-        Returns the indices of the problematic data points.
+        Returns the IDs and full error data for problematic points based on thresholds.
         """
-        #Energy #normalized error
+        # Normalized energy and force errors
         energy_error = np.abs(self.prediction_data["y_e"] - self.prediction_data["p_e"]) / np.std(self.prediction_data["y_e"])
-        #force normalized error
         force_error = np.abs(self.prediction_data["y_f"] - self.prediction_data["p_f"]) / np.std(self.prediction_data["y_f"])
-        # Find the indices of the problematic data points
+
+        # Indices of problematic data
         problematic_energy = np.where(energy_error > energy_cutoff)[0]
         problematic_force = np.where(force_error > force_cutoff)[0]
-        #get the ids of the problematic data points
-        problematic_energy_ids = [self.prediction_data["ids"][i] for i in problematic_energy]
-        problematic_force_ids = [self.prediction_data["force_ids"][i] for i in problematic_force]
-        #make a combined data frame of id and error for each data type
+
+        # Extract corresponding IDs and values
+        ids_e = [self.prediction_data["ids"][i] for i in problematic_energy]
+        ids_f = [self.prediction_data["force_ids"][i] for i in problematic_force]
+
+        y_e = self.prediction_data["y_e"][problematic_energy]
+        p_e = self.prediction_data["p_e"][problematic_energy]
+
+        y_f = self.prediction_data["y_f"][problematic_force]
+        p_f = self.prediction_data["p_f"][problematic_force]
+
+        # Build output DataFrames with ID, error, true, predicted
         problematic_energy_data = pd.DataFrame({
-            "ID": problematic_energy_ids,
-            "Error": energy_error[problematic_energy]
+            "ID": ids_e,
+            "Error": energy_error[problematic_energy],
+            "True": y_e,
+            "Predicted": p_e
         })
+
         problematic_force_data = pd.DataFrame({
-            "ID": problematic_force_ids,
-            "Error": force_error[problematic_force]
+            "ID": ids_f,
+            "Error": force_error[problematic_force],
+            "True": y_f,
+            "Predicted": p_f
         })
-        #get unique ids
-        problematic_energy_ids = list(set(problematic_energy_ids))
-        problematic_force_ids = list(set(problematic_force_ids))
-        return problematic_energy_ids, problematic_force_ids, problematic_energy_data, problematic_force_data
+
+        # Unique IDs (optional return)
+        unique_energy_ids = list(set(ids_e))
+        unique_force_ids = list(set(ids_f))
+
+        return unique_energy_ids, unique_force_ids, problematic_energy_data, problematic_force_data
     def generate_parity_plots(self):
         """
         Generate parity plots.

@@ -397,17 +397,17 @@ class UF3AbstractOptunaTrainer():
         analyzer.set_lammps_validation_structures(automater.get_lammps_validation_structures())
         analyzer.set_single_crystal_validation_structures(automater.get_single_crystal_validation_structures())
         analyzer.set_up_folder_structure()
-        for pair in chemical_system.interactions_map[2]:
-            analyzer.fix_repulsion_2b(pair=pair, r_target=1.0, min_curvature=50.0)
+        # for pair in chemical_system.interactions_map[2]:
+        #     analyzer.fix_repulsion_2b(pair=pair, r_target=1.0, min_curvature=50.0)
         normalized_error=0
         result = None
         if(settings['loss_weights']['error'] == 0):
             normalized_error = 0
         else:
-            #result = analyzer.test_model_prediction(training=False, use_elements=chemical_system.element_list,)
-            #normalized_error= 0.5*((result['rmse_e']/result['sigma_e']) + (result['rmse_f']/result['sigma_f']))
-            #normalized_error = 0.5*(result['rmse_e'] + result['rmse_f'])
-            normalized_error=0
+            result = analyzer.test_model_prediction(training=False)
+            normalized_error= 0.5*((result['rmse_e']/result['sigma_e']) + (result['rmse_f']/result['sigma_f']))
+            normalized_error = 0.5*(result['rmse_e'] + result['rmse_f'])
+            #normalized_error=0
         
 
         potential_file = os.path.join(os.getcwd(), "potentials", model_filename)
@@ -548,7 +548,8 @@ class UF3AbstractOptunaTrainer():
 class UF3OptunaTPETrainer(UF3AbstractOptunaTrainer):
     def __init__(self, base_directory, automater, settings, job_params):
         super().__init__(base_directory, automater, settings, job_params)
-
+    def get_name(self):
+        return self.settings.get("full_study_name", f"UF3_Distributed_Optuna_TPE-{uuid.uuid4().hex[:8]}")
     def run(self, temp_search=False):
         self.init_workers()
 
@@ -557,10 +558,13 @@ class UF3OptunaTPETrainer(UF3AbstractOptunaTrainer):
             group=True,
             n_startup_trials=self.settings.get('n_startup_trials', 10)
         )
-
+        unique_prefix = uuid.uuid4().hex[:8]
+        base_name = self.settings.get("study_name", "UF3_Distributed_Optuna")
+        full_name = f"{unique_prefix}-{base_name}"
+        self.settings["full_study_name"] = full_name
         study = optuna.create_study(
             sampler=sampler,
-            study_name="UF3_Distributed_Optuna",
+            study_name=self.settings["full_study_name"],
             direction="minimize"
         )
 
@@ -581,11 +585,11 @@ class UF3OptunaTPETrainer(UF3AbstractOptunaTrainer):
         return study
     
     def objective(self, trial):
-        ridge_1b = trial.suggest_float("ridge_1b", 1e-9, 1e-1, log=True)
-        ridge_2b = trial.suggest_float("ridge_2b", 1e-9, 1e-1, log=True)
-        ridge_3b = trial.suggest_float("ridge_3b", 1e-9, 1e-1, log=True)
-        curvature_2b = trial.suggest_float("curvature_2b", 1e-9, 1e-1, log=True)
-        curvature_3b = trial.suggest_float("curvature_3b", 1e-9, 1e-1, log=True)
+        ridge_1b = trial.suggest_float("ridge_1b", 1e-9, 1e-2, log=True)
+        ridge_2b = trial.suggest_float("ridge_2b", 1e-9, 1e-2, log=True)
+        ridge_3b = trial.suggest_float("ridge_3b", 1e-9, 1e-2, log=True)
+        curvature_2b = trial.suggest_float("curvature_2b", 1e-9, 1e-2, log=True)
+        curvature_3b = trial.suggest_float("curvature_3b", 1e-9, 1e-2, log=True)
         weight = trial.suggest_float("weight", 0.01, 1.0, log=False)
         params = (ridge_1b, ridge_2b, ridge_3b, curvature_2b, curvature_3b, weight)
 
@@ -639,9 +643,13 @@ class UF3OptunaTPEFineTuningTrainer(UF3AbstractOptunaTrainer):
             n_startup_trials=self.settings.get('n_startup_trials', 10)
         )
 
+        unique_prefix = uuid.uuid4().hex[:8]
+        base_name = self.settings.get("study_name", "UF3_Distributed_Optuna_FineTuning")
+        full_name = f"{unique_prefix}-{base_name}"
+        self.settings["full_study_name"] = full_name
         study = optuna.create_study(
             sampler=sampler,
-            study_name="UF3_Distributed_Optuna",
+            study_name=self.settings["full_study_name"],
             direction="minimize"
         )
 
