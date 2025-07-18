@@ -4,33 +4,27 @@ import os
 import shutil
 
 class ElasticTensorValidation(PotentialValidation):
+    @classmethod
+    def get_required_base_simulations(cls):
+        return None
+    computational_weight=2
+    required_supercell = (2,2,2) # Default, there is some redudnacy but that should be fine
 
-    required_supercell = (2, 2, 2)  # Default for 3D, will become 2 2 1 for 2D materials 
 
     @classmethod
-    def get_required_supercell(cls):
-        # Try to infer validation folder path from a reasonable default or just use (2,2,2)
-        import inspect
-        caller_self = inspect.stack()[1].frame.f_locals.get('self', None)
-        if caller_self:
-            folder_path = getattr(caller_self, "validation_folder_path", None)
-            if folder_path and os.path.exists(os.path.join(folder_path, "2D_material")):
-                print("[ElasticTensorValidation] Detected 2D material — using (2,2,1)")
-                return (2, 2, 1)
-        return (2, 2, 2)
+    def determine_supercell(cls, validation_folder_path):
 
-    
-    computational_weight = 2
+        abs_path = os.path.abspath(validation_folder_path)
+        if os.path.exists(os.path.join(abs_path, "2D_material")):
+            print("[ElasticTensorValidation] Detected 2D material — using (2,2,1)")
+            return (2, 2, 1)
+        return (2, 2, 2)
 
     def __init__(self, potential_file, lammps_model_file, dft_model_file, element_list, validation_folder_path, run_scripts, template_directory, parameters=None):
         abs_validation_path = os.path.abspath(validation_folder_path)
         self.validation_folder_path = abs_validation_path
 
-        
-        if os.path.exists(os.path.join(self.validation_folder_path, "2D_material")):
-            self.required_supercell = (2, 2, 1)
-        else:
-            self.required_supercell = (2, 2, 2)
+        self.required_supercell = self.determine_supercell(self.validation_folder_path)
 
         super().__init__(
             "ElasticTensorSimulation",
