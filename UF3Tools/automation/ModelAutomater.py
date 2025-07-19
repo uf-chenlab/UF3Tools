@@ -72,8 +72,10 @@ class ModelAutomater:
             'cur_subsample': 'filter_cur_subsample',
             'min_pair_distance': 'filter_min_pair_distance',
             'min_pair_distance_by_element': 'filter_min_pair_distance_by_element',
+            'isolated_pair_by_element': 'filter_isolated_pair_by_element',
             'isolated_atoms': 'filter_isolated_atoms',
             'invalid_gasp_runs': 'filter_invalid_gasp_runs',
+            'duplicate_indices': 'filter_duplicate_indices',
             'none': 'get_data'
             # Add new filters here as needed
         }

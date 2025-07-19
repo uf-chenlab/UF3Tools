@@ -24,6 +24,7 @@ class PotentialValidation:
         return cls.required_single_crystal_simulations
 
     @classmethod
+
     def get_required_supercell(cls, params=None):
         return cls.required_supercell
 
