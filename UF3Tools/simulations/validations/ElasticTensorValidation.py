@@ -17,8 +17,22 @@ class ElasticTensorValidation(PotentialValidation):
         abs_path = os.path.abspath(validation_folder_path)
         if os.path.exists(os.path.join(abs_path, "2D_material")):
             print("[ElasticTensorValidation] Detected 2D material — using (2,2,1)")
-            return (2, 2, 1)
-        return (2, 2, 2)
+            required_supercell = (2, 2, 1)
+        else:
+            print("[ElasticTensorValidation] No 2D material detected — using (2,2,2)")
+            required_supercell = (2, 2, 2)
+        return required_supercell
+       
+
+    @classmethod
+    def get_required_supercell(cls, validation_folder_path=None):
+        if validation_folder_path:
+            size = cls.determine_supercell(validation_folder_path)
+            cls.required_supercell = size          # keep attribute in sync
+            return size
+        return cls.required_supercell              # fallback
+    
+
 
     def __init__(self, potential_file, lammps_model_file, dft_model_file, element_list, validation_folder_path, run_scripts, template_directory, parameters=None):
         abs_validation_path = os.path.abspath(validation_folder_path)
@@ -95,19 +109,35 @@ class ElasticTensorValidation(PotentialValidation):
         self.has_dft_data = True
 
     
-
-
-    
-    def get_box_length_z(self):
-        """Parse zlo zhi from LAMMPS data file and return box height in nanometers."""
+    def get_monolayer_thickness_from_atoms(self):
+        """Calculate the physical thickness of a 2D monolayer from atomic z-coordinates in the LAMMPS model file."""
+        z_coords = []
+        reading_atoms = False
         with open(self.lammps_model_file, 'r') as f:
             for line in f:
-                if "zlo zhi" in line:
+                if "Atoms" in line:
+                    reading_atoms = True
+                    next(f)  # skip the blank line after 'Atoms'
+                    continue
+                if reading_atoms:
+                    if line.strip() == "":
+                        break  # end of atom section
                     parts = line.strip().split()
-                    zlo = float(parts[0])
-                    zhi = float(parts[1])
-                    return (zhi - zlo) * 0.1  # convert from Å to nm
-        raise RuntimeError("Could not find 'zlo zhi' line in the LAMMPS model file.")
+                    if len(parts) >= 5:
+                        # Assumes format: atom-ID atom-type x y z [optional extra columns]
+                        z = float(parts[4])  # z-coordinate is 5th column
+                        z_coords.append(z)
+        
+        if not z_coords:
+            raise RuntimeError("Could not extract z-coordinates from the LAMMPS model file.")
+
+        min_z = min(z_coords)
+        max_z = max(z_coords)
+        thickness_angstrom = max_z - min_z
+        thickness_nm = thickness_angstrom * 0.1  # convert from Å to nm
+        print(f"[Monolayer thickness] min z = {min_z:.4f}, max z = {max_z:.4f}, thickness = {thickness_nm:.4f} nm")
+        return thickness_nm
+
 
     def convert_lammps_elastic_tensor_to_2d(self, tensor_3d, thickness_nm):
         """Convert all LAMMPS elastic constants from GPa to N/m using box thickness."""
@@ -256,7 +286,8 @@ class ElasticTensorValidation(PotentialValidation):
 # Convert to 2D units if needed
             if os.path.exists(os.path.join(self.validation_folder_path, "2D_material")):
                 print("Converting LAMMPS elastic constants from GPa to N/m for 2D comparison")
-                thickness_nm = self.get_box_length_z()
+                thickness_nm = self.get_monolayer_thickness_from_atoms()
+                print(f"Using monolayer thickness: {thickness_nm:.4f} nm")
                 self.lammps_results["elastic_tensor"] = self.convert_lammps_elastic_tensor_to_2d(
                     self.lammps_results["elastic_tensor"], thickness_nm
                 )
