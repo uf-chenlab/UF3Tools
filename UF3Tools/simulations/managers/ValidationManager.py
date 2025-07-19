@@ -154,11 +154,7 @@ class ValidationManager:
             try:
                 print(f'Running validation: {validation}')
                 modifier = LAMMPSModifier(self.lammps_model_file)
-
-                if validation == "elastic_tensor":
-                    sc = self.validation_lut[validation].get_required_supercell(self.validation_folder_path)
-                else:
-                    sc = self.validation_lut[validation].required_supercell
+                sc = self.validation_lut[validation].get_required_supercell(self.validation_folder_path)
                 lammps_file = modifier.generate_supercell(sc)
 
 
