@@ -295,17 +295,31 @@ class ElasticTensorValidation(PotentialValidation):
             # # while we need them in N/m for 2D materials.
             # Convert to 2D units if needed
 # Convert to 2D units if needed
+            # if os.path.exists(os.path.join(self.validation_folder_path, "2D_material")):
+            #     print("Converting LAMMPS elastic constants from GPa to N/m for 2D comparison")
+            #     thickness_nm = self.get_monolayer_thickness_from_atoms()
+            #     print(f"Using monolayer thickness: {thickness_nm:.4f} nm")
+            #     self.lammps_results["elastic_tensor"] = self.convert_lammps_elastic_tensor_to_2d(
+            #         self.lammps_results["elastic_tensor"], thickness_nm
+            #     )
+            #     for key in ["bulk_modulus_voigt", "bulk_modulus_reuss", "bulk_modulus_hill",
+            #                 "shear_modulus_voigt", "shear_modulus_reuss", "shear_modulus_hill"]:
+            #         if self.lammps_results[key] is not None:
+            #             self.lammps_results[key] *= thickness_nm
+            
             if os.path.exists(os.path.join(self.validation_folder_path, "2D_material")):
                 print("Converting LAMMPS elastic constants from GPa to N/m for 2D comparison")
-                thickness_nm = self.get_monolayer_thickness_from_atoms()
-                print(f"Using monolayer thickness: {thickness_nm:.4f} nm")
+                lz_nm = self.get_box_height_from_datafile()
+                slab_thickness_nm = self.get_monolayer_thickness_from_atoms()
+                print(f"[2D Conversion] Using box height Lz = {lz_nm:.4f} nm (atomic extent = {slab_thickness_nm:.4f} nm)")
                 self.lammps_results["elastic_tensor"] = self.convert_lammps_elastic_tensor_to_2d(
-                    self.lammps_results["elastic_tensor"], thickness_nm
+                    self.lammps_results["elastic_tensor"], lz_nm
                 )
                 for key in ["bulk_modulus_voigt", "bulk_modulus_reuss", "bulk_modulus_hill",
                             "shear_modulus_voigt", "shear_modulus_reuss", "shear_modulus_hill"]:
                     if self.lammps_results[key] is not None:
-                        self.lammps_results[key] *= thickness_nm
+                        self.lammps_results[key] *= lz_nm
+
 
             # Now assign converted tensor
             lammps_elastic_tensor = self.lammps_results["elastic_tensor"]
