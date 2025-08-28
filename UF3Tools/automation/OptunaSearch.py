@@ -17,15 +17,15 @@ from datetime import datetime
 import concurrent.futures
 import time
 import optuna
-from dask.distributed import Client
-from dask_jobqueue import SLURMCluster
 import dask
-from dask.distributed import WorkerPlugin
+import pickle
+
 
 class AutomaterPlugin(WorkerPlugin):
     def __init__(self, automater_init_args, settings):
         self.automater_init_args = automater_init_args
         self.settings = settings
+        self.random_seed=settings.get('random_seed', 42)
 
     def setup(self, worker):
         worker_hostname = socket.gethostname()
@@ -54,15 +54,25 @@ class AutomaterPlugin(WorkerPlugin):
                 self.settings['testing_sets'],
                 include_in_training=False,
                 test_split_fraction=self.settings['train_test_split'],
-                seed=42
+                seed=self.random_seed
             )
         else:
             automater.split_data(
                 self.settings['train_test_split'],
                 self.settings['unique_indices'],
                 self.settings['unique_indices'],
-                self.settings['excluded_testing_sets']
+                self.settings['excluded_testing_sets'],
+                random_seed = self.random_seed
             )
+        data_dir = os.path.join(self.settings['base_directory'], "data")
+        os.makedirs(data_dir, exist_ok=True)
+        import pickle
+        with open(os.path.join(data_dir, "training.pkl"), "wb") as f:
+            pickle.dump(automater.get_training_set(), f)
+        with open(os.path.join(data_dir, "testing.pkl"), "wb") as f:
+            pickle.dump(automater.get_testing_set(), f)
+        with open(os.path.join(data_dir, 'seed.txt'), 'w') as f:
+            f.write(self.random_seed)
         automater.set_dft_validation_structures(self.settings['testing_mp_structures'])
         automater.set_lammps_validation_structures(self.settings['testing_mp_structures'])
         os.chdir(trial_folder)
@@ -79,18 +89,6 @@ class AutomaterPlugin(WorkerPlugin):
             batch_size=self.settings['batch_size'],
             num_cores=self.settings['cores_per_job']
         )
-        # filter_list = self.settings.get('filter_list', [])
-        # if filter_list is not None and len(filter_list) > 0:
-        #     feature_filter = DataFeatureFilter(fitting_df, non_features=self.settings.get('filter_non_features', []))
-        #     if 'conflicting' in filter_list:
-        #         feature_filter.filter_conflicting_by_feature()
-        #     if 'lof' in filter_list:
-        #         feature_filter.filter_lof_outliers()
-        #     if 'energy_smoothness' in filter_list:
-        #         feature_filter.filter_energy_smoothness_features()
-        #     if 'energy_order' in filter_list:
-        #         feature_filter.filter_energy_order_conflicts_features()
-
         # Store in worker attributes
         worker.plugins['uf3_automater'] = automater
         worker.plugins['uf3_worker_id'] = self.worker_id
@@ -140,6 +138,7 @@ class UF3AbstractOptunaTrainer():
         }
         print("automater args: ", automater_args)
         self.settings['ignore_list'] = self.automater.get_ignore_list()
+        self.settings['random_seed'] = int(time.time() * 1000)
         if self.settings.get('trainer') is None:
             self.settings['trainer'] = self.automater.get_trainer()
         
@@ -397,8 +396,8 @@ class UF3AbstractOptunaTrainer():
         analyzer.set_lammps_validation_structures(automater.get_lammps_validation_structures())
         analyzer.set_single_crystal_validation_structures(automater.get_single_crystal_validation_structures())
         analyzer.set_up_folder_structure()
-        # for pair in chemical_system.interactions_map[2]:
-        #     analyzer.fix_repulsion_2b(pair=pair, r_target=1.0, min_curvature=50.0)
+        for pair in chemical_system.interactions_map[2]:
+            analyzer.fix_repulsion_2b(pair=pair, r_target=1.0, min_curvature=50.0)
         normalized_error=0
         result = None
         if(settings['loss_weights']['error'] == 0):
@@ -655,7 +654,7 @@ class UF3OptunaTPEFineTuningTrainer(UF3AbstractOptunaTrainer):
 
         study.optimize(
             lambda trial: self.objective(trial),
-            n_trials=self.settings.get('num_trials', 2),
+            n_trials=self.settings.get('n_trials', 2),
             n_jobs=self.settings.get('n_workers', 2)
         )
 
@@ -697,12 +696,7 @@ class UF3OptunaTPEFineTuningTrainer(UF3AbstractOptunaTrainer):
         }
 
         try:
-            chemical_system, trainer_model,bspline_config, features= automater.import_model(regularizer, "/blue/ypchen/ntaormina/uf3/AlN/test_auto/UF3-Tools/test_model")
-
-            generator = UF3LammpsPotentialGenerator(trainer_model, chemical_system, bspline_config)
-            generator.potential_to_model_json('/blue/ypchen/ntaormina/uf3/AlN/test_auto/UF3-Tools/grid_search_results/worker_c0713a-s21.ufhpc-4099472/db916af2-e2d1-4da2-a54e-bbb00227', '/blue/ypchen/ntaormina/uf3/AlN/test_auto/UF3-Tools/db916af2-e2d1-4da2-a54e-bbb00227.json', 'db916af2-e2d1-4da2-a54e-bbb00227_trial_445_r1b_1.3767099184507492e-09_r2b_9.354851029931691e-09_r3b_2.8391161554856034e-08_curv2b_1.2092727600321928e-06_curv3b_9.25158512840749e-08_w_0.9985110353270067_sw_structure_0.04_isif_pressure2_0.02_AlN_structures_0.24_solid_n2_structure_0.11_relaxed_polytypes_0.15_elastic_tensor_2x2x2_0.19_complete_structures_0.24')
-
-            automater.import_model(regularizer, model)
+            chemical_system, trainer_model, bspline_config, features = automater.import_model(regularizer, model)
             analyzer = ModelAnalyzer(chemical_system, 
                                      trainer_model,
                                      bspline_config,
@@ -718,12 +712,6 @@ class UF3OptunaTPEFineTuningTrainer(UF3AbstractOptunaTrainer):
             analyzer.retrieve_model_files()
             for pair in chemical_system.interactions_map[2]:
                 analyzer.fix_repulsion_2b(pair=pair, r_target=1.0, min_curvature=50.0)
-            # results = analyzer.analyze_model(automater.data_coordinator)
-            # energy_ids, force_ids, energy_bad, force_bad = analyzer.find_problematic_data(2.5, 2.5)
-            # output_file = "energy_bad.xlsx"
-            # energy_bad.to_excel(output_file)
-            # output_file = "force_bad.xlsx"
-            # force_bad.to_excel(output_file)
 
             analyzer.export_model_to_lammps("potentials/", model_filename, True, "ntaormina", "metal", "nk")
             
@@ -752,6 +740,7 @@ class UF3OptunaTPEFineTuningTrainer(UF3AbstractOptunaTrainer):
         curvature_3b = trial.suggest_float("curvature_3b", 1e-9, 1e-1, log=True)
         weight = trial.suggest_float("weight", 0.01, 1.0, log=False)
         alpha = trial.suggest_float("alpha", 0.01, 1.0, log=False)
+        alpha = 0.1
         params = (ridge_1b, ridge_2b, ridge_3b, curvature_2b, curvature_3b, weight, alpha, self.model_path)
 
         if self.settings['optimize_sample_weights']:

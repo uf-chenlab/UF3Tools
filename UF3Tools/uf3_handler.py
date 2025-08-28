@@ -902,6 +902,13 @@ class DataFilter:
         """
         print(f"Filtering out data points with indices: {indices}")
         self.data = self.data[~self.data.index.isin(indices)]
+    def filter_out_unrelaxed(self):
+        """Filters out all datapoints from the relaxation trajectories, except the last run
+        """ 
+        all_indices = self.data.index.tolist()
+        relaxed_indices = [i for i in all_indices if re.search(r'OUTCAR_\d+$', i)]
+        print(f"Keeping only relaxed structure indices: {len(relaxed_indices)}")
+        self.data = self.data[self.data.index.isin(relaxed_indices)]       
 
     def export_to_pickle(self, filename):
         """
@@ -1095,18 +1102,32 @@ class DataFilter:
         print(f"Filtered data length after CUR subsampling: {len(self.data)}")
     def filter_min_pair_distance(self, threshold):
         print(f"Filtering structures with any pair distance below {threshold} Å")
-        
-        def has_close_pair(atoms):
+
+        def get_distances_and_violations(atoms):
             try:
-                # this gets full distance matrix using PBC
                 dists = atoms.get_all_distances(mic=True)
-                np.fill_diagonal(dists, np.inf)  # ignore self-pairs
-                return np.any(dists < threshold)
+                np.fill_diagonal(dists, np.inf)
+                upper_tri = np.triu_indices_from(dists, k=1)
+                flat_dists = dists[upper_tri]
+                violations = [(i, j, dists[i, j]) for i, j in zip(*upper_tri) if dists[i, j] < threshold]
+                has_close = len(violations) > 0
+                return pd.Series([flat_dists.tolist(), violations, has_close])
             except Exception as e:
                 print(f"Error checking distances: {e}")
-                return True  # default to removing if error occurs
-        
-        self.data = self.data[~self.data['geometry'].apply(has_close_pair)]
+                return pd.Series([[], [], True])
+
+        self.data[['all_distances', 'violating_pairs', 'has_close_pair']] = self.data['geometry'].apply(get_distances_and_violations)
+
+        filtered_indices = self.data.index[self.data['has_close_pair']].tolist()
+        print(f"Filtered out indices: {filtered_indices}")
+        removed_data = self.data[self.data['has_close_pair']]
+        print(f"Removed {len(removed_data)} structures with close pairs.")
+        self.data = self.data[~self.data['has_close_pair']]
+        self.data.drop(columns=['has_close_pair'], inplace=True)
+
+        # export only the data that was filtered
+        removed_data.to_excel('filtered_data.xlsx', index=True)
+
     def filter_min_pair_distance_by_element(self, nn_cutoff=1.3, element='N'):
         """
         Removes structures that contain close element–element pairs (e.g. N–N) within nn_cutoff Å,
@@ -2052,7 +2073,7 @@ class ModelAnalyzer:
         :param single_crystal_validation_structures: List of single crystal validation structures.
         """
         self.single_crystal_validation_structures = single_crystal_validation_structures
-    def analyze_model(self, data_coordinator, r_cut = 10.0, bins = 0.01, training = False):
+    def analyze_model(self, data_coordinator, r_cut = 10.0, bins = 0.01, training = False, elim=[-8,-4], flim=[-8,8]):
         """
         Analyze the model.
         """
@@ -2071,7 +2092,7 @@ class ModelAnalyzer:
         #self.generate_density_plot(analysis)
         results= self.test_model_prediction(training = training, use_elements= self.chemical_system.element_list)
         #results = self.export_prediction_data_to_dataframe()
-        self.generate_parity_plots()
+        self.generate_parity_plots(elim, flim)
         return results
     def generate_density_plot(self, analysis):
         canvases = plotting.plot_pair_distributions(analysis, show_cutoffs=False)
@@ -2225,7 +2246,7 @@ class ModelAnalyzer:
         unique_force_ids = list(set(ids_f))
 
         return unique_energy_ids, unique_force_ids, problematic_energy_data, problematic_force_data
-    def generate_parity_plots(self):
+    def generate_parity_plots(self, elim=None, flim=None):
         """
         Generate parity plots.
         """
@@ -2236,6 +2257,9 @@ class ModelAnalyzer:
         ax[0].set_xlabel("DFT Energy (eV)")
         ax[0].set_ylabel("Predicted Energy (eV)")
         ax[0].set_title("Energy Parity Plot")
+        if(elim is not None):
+            ax[0].set_xlim(elim[0], elim[1])
+            ax[0].set_ylim(elim[0], elim[1])
 
         plotting.density_scatter(self.prediction_data["y_f"], self.prediction_data["p_f"], ax=ax[1], alpha=0.5)
         ax[1].set_xlabel("DFT Force (eV/A)")
@@ -2243,10 +2267,13 @@ class ModelAnalyzer:
         ax[1].set_title("Force Parity Plot")
         ax[1].set_xlim(-8, 8)
         ax[1].set_ylim(-8, 8)
+        if (flim is not None):
+            ax[1].set_xlim(flim[0], flim[1])
+            ax[1].set_ylim(flim[0], flim[1])
 
         plt.tight_layout()
         plt.show()
-    def export_model_to_lammps(self, directory, filename=None, overwrite=True, author="author", units="metal", knots_spacing_type="nk"):
+    def export_model_to_lammps(self, directory, filename=None, overwrite=True, author="author", units="metal", knots_spacing_type="uk"):
         """
         Export the model to a LAMMPS potential file using the UF3LammpsPotentialGenerator.
 
@@ -2554,7 +2581,7 @@ class UF3LammpsPotentialGenerator:
         self.model.to_json(filename)
 
     def generate_potential_file(self, directory, filename=None, overwrite=True,
-                                author="author", units="metal", knots_spacing_type="nk"):
+                                author="author", units="metal", knots_spacing_type="uk"):
         if not os.path.exists(directory):
             os.mkdir(directory)
 

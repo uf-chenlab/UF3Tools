@@ -1,18 +1,15 @@
 from UF3Tools.uf3_handler import *
 from UF3Tools.simulations import *
-from concurrent.futures import ProcessPoolExecutor, as_completed, ThreadPoolExecutor
 import os
-import tempfile
 import shutil
 from tqdm import tqdm
 from threading import Lock
 import os
 import threading
 from multiprocessing import Pool
-from dask.distributed import Client
-from dask_jobqueue import SLURMCluster
 import uuid
 from datetime import datetime
+import time
 
 
 def set_cpu_affinity(core_ids):
@@ -76,6 +73,7 @@ class ModelAutomater:
             'isolated_atoms': 'filter_isolated_atoms',
             'invalid_gasp_runs': 'filter_invalid_gasp_runs',
             'duplicate_indices': 'filter_duplicate_indices',
+            'unrelaxed_structures': 'filter_out_unrelaxed',
             'none': 'get_data'
             # Add new filters here as needed
         }
@@ -699,10 +697,12 @@ class ModelAutomater:
         :return: List of unique indices.
         """
         return data.index.to_series().apply(lambda x: x.lower().split('_run')[0]).unique()
-    def split_data(self, test_percent=0.2, filter_index=True, unique_indices=True, exclude_list=None):
-        # Separate excluded data first
+    def split_data(self, test_percent=0.2, filter_index=True, unique_indices=True, exclude_list=None, random_seed=None, include_in_training=False):
+        # bail out early if there's nothing to split
         if self.model_data.empty:
             raise ValueError("Model data is empty. Please consolidate data before splitting.")
+
+        # carve out datasets we never want in test
         if exclude_list and "source_dataset" in self.model_data.columns:
             excluded_data = self.model_data[self.model_data["source_dataset"].isin(exclude_list)]
             included_data = self.model_data[~self.model_data["source_dataset"].isin(exclude_list)]
@@ -711,12 +711,15 @@ class ModelAutomater:
             excluded_data = pd.DataFrame(columns=self.model_data.columns)
             included_data = self.model_data
 
+        # unique index grouping by prefix before "_run"
         if unique_indices:
             index_prefixes = included_data.index.to_series().apply(lambda x: x.lower().split('_run')[0]).unique()
         else:
             index_prefixes = included_data.index.to_series()
 
-        np.random.seed(42)
+        if random_seed is None:
+            random_seed = int(time.time() * 1000)
+        np.random.seed(random_seed)
         num_indices_to_select = int(test_percent * len(index_prefixes))
         selected_prefixes = np.random.choice(index_prefixes, num_indices_to_select, replace=False)
 
@@ -731,15 +734,26 @@ class ModelAutomater:
             train_split = shuffled.iloc[:split_point]
             test_split = shuffled.iloc[split_point:]
 
-        # Final train/test sets
-        self.training_set = pd.concat([train_split, excluded_data], axis=0)
+        # assemble final sets
+        if include_in_training:
+            # training includes train + test + always-include bucket
+            self.training_set = pd.concat([train_split, test_split, excluded_data], axis=0)
+        else:
+            # default: training excludes test, but includes the excluded bucket
+            self.training_set = pd.concat([train_split, excluded_data], axis=0)
+
         self.testing_set = test_split
 
         self.train_keys = self.training_set.index
         self.test_keys = self.testing_set.index
 
-        print(f"Training set length: {len(self.training_set)}. Testing set length: {len(self.testing_set)}")
+        if include_in_training:
+            print(f"Training set length: {len(self.training_set)} (includes test). Testing set length: {len(self.testing_set)}")
+        else:
+            print(f"Training set length: {len(self.training_set)}. Testing set length: {len(self.testing_set)}")
+
         return self.training_set, self.testing_set
+
 
     def select_testing_set(self, test_dataset_names, include_in_training=False, test_split_fraction=None, seed=42069):
         """
