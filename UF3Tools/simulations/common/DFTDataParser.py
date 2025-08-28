@@ -101,6 +101,8 @@ class DFTDataParser:
         outcar = Outcar(filename)
         energy = outcar.final_energy
         return energy
+        
+        
     def get_elastic_tensor(self, dft_path):
         dft_data = {
             "elastic_tensor": None,
@@ -111,40 +113,99 @@ class DFTDataParser:
             "shear_modulus_reuss": None,
             "shear_modulus_hill": None,
         }
+
         with open(dft_path, 'r') as file:
             lines = file.readlines()
-            
-        elastic_tensor_start = False
+
         elastic_tensor = []
-        for line in lines:
+        is_2d = False
+        tensor_started = False
+
+        for idx, line in enumerate(lines):
             if "Stiffness Tensor C_ij (in GPa):" in line:
-                elastic_tensor_start = True
-                continue
-            if elastic_tensor_start:
-                if line.strip() == "":
-                    break
-                tensor_row = list(map(float, line.split()))
-                elastic_tensor.append(tensor_row)
-                
-        dft_data["elastic_tensor"] = elastic_tensor
-        
-        # Reading bulk and shear modulus (Voigt, Reuss, Hill)
-        for line in lines:
-            if "Bulk Modulus B (GPa)" in line:
-                match = re.search(r"\|\s+([\d\.]+)\s+\|\s+([\d\.]+)\s+\|\s+([\d\.]+)\s+\|", line)
-                if match:
-                    dft_data["bulk_modulus_voigt"] = float(match.group(1))
-                    dft_data["bulk_modulus_reuss"] = float(match.group(2))
-                    dft_data["bulk_modulus_hill"] = float(match.group(3))
-            
-            if "Shear Modulus G (GPa)" in line:
-                match = re.search(r"\|\s+([\d\.]+)\s+\|\s+([\d\.]+)\s+\|\s+([\d\.]+)\s+\|", line)
-                if match:
-                    dft_data["shear_modulus_voigt"] = float(match.group(1))
-                    dft_data["shear_modulus_reuss"] = float(match.group(2))
-                    dft_data["shear_modulus_hill"] = float(match.group(3))
+                tensor_started = True
+                start_idx = idx + 1
+                num_rows = 6
+                break
+            elif "Stiffness Tensor C_ij (in N/m):" in line:
+                is_2d = True
+                tensor_started = True
+                start_idx = idx + 1
+                num_rows = 3
+                break
+
+        if tensor_started:
+            for i in range(num_rows):
+                row = lines[start_idx + i].strip()
+                if row:
+                    elastic_tensor.append([float(x) for x in row.split()])
+
+            if is_2d:
+                full_tensor = [[0.0]*6 for _ in range(6)]
+                for i in range(3):
+                    for j in range(3):
+                        full_tensor[i][j] = elastic_tensor[i][j]
+                dft_data["elastic_tensor"] = full_tensor
+            else:
+                dft_data["elastic_tensor"] = elastic_tensor
+
+        # === 2D block parsing ===
+        if is_2d:
+            in_2d_table = False
+            for line in lines:
+                if "Average mechanical properties of 2D polycrystal" in line:
+                    in_2d_table = True
+                    continue
+
+                if in_2d_table:
+                    if "Bulk modulus K" in line:
+                        parts = line.split("|")
+                        if len(parts) >= 5:
+                            try:
+                                dft_data["bulk_modulus_voigt"] = float(parts[2].strip())
+                                dft_data["bulk_modulus_reuss"] = float(parts[3].strip())
+                                dft_data["bulk_modulus_hill"]  = float(parts[4].strip())
+                            except:
+                                pass
+                    elif "Shear modulus G" in line:
+                        parts = line.split("|")
+                        if len(parts) >= 5:
+                            try:
+                                dft_data["shear_modulus_voigt"] = float(parts[2].strip())
+                                dft_data["shear_modulus_reuss"] = float(parts[3].strip())
+                                dft_data["shear_modulus_hill"]  = float(parts[4].strip())
+                            except:
+                                pass
+                    elif "Bulk/Shear ratio" in line:
+                        break
+
+        # === 3D fallback ===
+        if not is_2d:
+            for line in lines:
+                if "Bulk Modulus B (GPa)" in line:
+                    match = re.search(r"\|\s+([\d\.]+)\s+\|\s+([\d\.]+)\s+\|\s+([\d\.]+)\s+\|", line)
+                    if match:
+                        dft_data["bulk_modulus_voigt"] = float(match.group(1))
+                        dft_data["bulk_modulus_reuss"] = float(match.group(2))
+                        dft_data["bulk_modulus_hill"]  = float(match.group(3))
+                if "Shear Modulus G (GPa)" in line:
+                    match = re.search(r"\|\s+([\d\.]+)\s+\|\s+([\d\.]+)\s+\|\s+([\d\.]+)\s+\|", line)
+                    if match:
+                        dft_data["shear_modulus_voigt"] = float(match.group(1))
+                        dft_data["shear_modulus_reuss"] = float(match.group(2))
+                        dft_data["shear_modulus_hill"]  = float(match.group(3))
+
+
+        if is_2d:
+            print("Detected 2D material format (N/m units in elastic tensor).")
+        else:
+            print("Detected 3D material format (GPa units in elastic tensor).")
 
         return dft_data
+
+
+
+
     def get_cohesive_energy(self, dft_path):
         dft_data = {
             'cohesive_energy': None,
