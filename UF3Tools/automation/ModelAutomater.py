@@ -697,6 +697,20 @@ class ModelAutomater:
         :return: List of unique indices.
         """
         return data.index.to_series().apply(lambda x: x.lower().split('_run')[0]).unique()
+    def save_split_indices(self, train_idx, test_idx, prefix=None):
+        os.makedirs(self.filter_directory, exist_ok=True)
+        tag = f"{prefix}_" if prefix else ""
+        train_path = os.path.join(self.filter_directory, f"{tag}train_indices.txt")
+        test_path = os.path.join(self.filter_directory, f"{tag}test_indices.txt")
+
+        train_list = list(map(str, train_idx))
+        test_list = list(map(str, test_idx))
+
+        with open(train_path, "w") as f:
+            f.write("\n".join(train_list))
+        with open(test_path, "w") as f:
+            f.write("\n".join(test_list))
+
     def split_data(self, test_percent=0.2, filter_index=True, unique_indices=True, exclude_list=None, random_seed=None, include_in_training=False):
         # bail out early if there's nothing to split
         if self.model_data.empty:
@@ -751,7 +765,7 @@ class ModelAutomater:
             print(f"Training set length: {len(self.training_set)} (includes test). Testing set length: {len(self.testing_set)}")
         else:
             print(f"Training set length: {len(self.training_set)}. Testing set length: {len(self.testing_set)}")
-
+        self.save_split_indices(self.train_keys, self.test_keys)
         return self.training_set, self.testing_set
 
 
@@ -803,6 +817,7 @@ class ModelAutomater:
 
         self.train_keys = self.training_set.index
         print(f"Testing set size: {len(self.testing_set)}, Training set size: {len(self.training_set)}")
+        self.save_split_indices(self.train_keys, self.test_keys)
         return self.training_set, self.testing_set
     def select_testing_sets(self, dataset_names, test_split_fraction=0.1, seed=42069):
         np.random.seed(seed)
@@ -832,6 +847,7 @@ class ModelAutomater:
         self.test_keys = self.testing_set.index
 
         print(f"Training set size: {len(self.training_set)}. Testing set size: {len(self.testing_set)}")
+        self.save_split_indices(self.train_keys, self.test_keys)
         return self.training_set, self.testing_set, individual_test_splits
     def set_training_data(self, data):
         self.training_set = data
