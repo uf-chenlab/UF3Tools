@@ -10,6 +10,7 @@ from multiprocessing import Pool
 import uuid
 from datetime import datetime
 import time
+from UF3Tools.common.UF3Utility import daily_millis
 
 
 def set_cpu_affinity(core_ids):
@@ -732,7 +733,7 @@ class ModelAutomater:
             index_prefixes = included_data.index.to_series()
 
         if random_seed is None:
-            random_seed = int(time.time() * 1000)
+            random_seed = daily_millis()
         np.random.seed(random_seed)
         num_indices_to_select = int(test_percent * len(index_prefixes))
         selected_prefixes = np.random.choice(index_prefixes, num_indices_to_select, replace=False)
@@ -769,7 +770,7 @@ class ModelAutomater:
         return self.training_set, self.testing_set
 
 
-    def select_testing_set(self, test_dataset_names, include_in_training=False, test_split_fraction=None, seed=42069):
+    def select_testing_set(self, test_dataset_names, include_in_training=False, test_split_fraction=None, seed=None):
         """
         Set specific datasets (by name) as the testing set. Optionally include them in training.
 
@@ -779,6 +780,8 @@ class ModelAutomater:
         - test_split_fraction (float or None): If given, randomly split each dataset with this fraction for testing
         - seed (int): Random seed for reproducibility
         """
+        if seed is None:
+            seed = daily_millis()
         np.random.seed(seed)
         all_test_indices = set()
         all_train_indices = set()
@@ -819,7 +822,9 @@ class ModelAutomater:
         print(f"Testing set size: {len(self.testing_set)}, Training set size: {len(self.training_set)}")
         self.save_split_indices(self.train_keys, self.test_keys)
         return self.training_set, self.testing_set
-    def select_testing_sets(self, dataset_names, test_split_fraction=0.1, seed=42069):
+    def select_testing_sets(self, dataset_names, test_split_fraction=0.1, seed=None):
+        if seed is None:
+            seed = daily_millis()
         np.random.seed(seed)
         all_test_indices = set()
         individual_test_splits = {}
