@@ -48,7 +48,7 @@ class CoreManager:
 
 
 class ModelAutomater:
-    def __init__(self, directories, run_data_path, feature_filename, element_list, degree, chemical_system, bspline_config, data_folder=None, num_cores=1, filtered_directory=None):
+    def __init__(self, directories, run_data_path, feature_filename, element_list, degree, chemical_system, bspline_config, data_folder=None, num_cores=1, filtered_directory=None, filtered_history=[]):
          # Class-wide LUT for filter types to corresponding methods
         self.FILTER_FUNCTION_LUT = {
             'composition': 'filter_composition',
@@ -139,6 +139,7 @@ class ModelAutomater:
         self.fitting_df = None
         self.fitting_features = None
         self.trainer=None
+        self.filter_history = filtered_history
     def set_filtered_directory(self, directory):
         self.filter_directory = directory
         os.makedirs(self.filter_directory, exist_ok=True)
@@ -191,6 +192,10 @@ class ModelAutomater:
         return self.training_set
     def get_testing_set(self):
         return self.testing_set
+    def get_training_keys(self):
+        return self.train_keys
+    def get_testing_keys(self):
+        return self.test_keys
     def get_trainer(self):
         return self.trainer
     def set_trainer(self, trainer):
@@ -559,6 +564,16 @@ class ModelAutomater:
         # Apply the filter with the provided arguments
         filter_method(*args)
         
+        filter_record = {
+            'timestamp': datetime.now().isoformat(),
+            'data_type': data_type,
+            'filter_type': filter_type,
+            'params': args,
+            'initial_length': len(data),
+            'final_length': len(data_filter.get_data())
+        }
+        self.filter_history.append(filter_record)
+        
         # Export the filtered data to a new pickle file in the filtered directory
         data_filter.export_to_pickle(filtered_file_path)
         
@@ -612,6 +627,16 @@ class ModelAutomater:
                 continue
 
             filter_method(*args)
+            
+            filter_record = {
+                'timestamp': datetime.now().isoformat(),
+                'data_type': data_type,
+                'filter_type': filter_type,
+                'params': args,
+                'initial_length': len(data),
+                'final_length': len(data_filter.get_data())
+            }
+            self.filter_history.append(filter_record)
 
             data_filter.export_to_pickle(filtered_file_path)
 
@@ -619,7 +644,12 @@ class ModelAutomater:
 
             self.load_filtered_data()
 
-   
+    def get_filter_history(self):
+        return self.filter_history
+    def clear_filter_history(self):
+        self.filter_history = []
+    def set_filter_history(self, history):
+        self.filter_history = history
     def copy_unfiltered_data(self):
         """
         Copy unfiltered data to the filtered directory, excluding data types in data_ignore_list.

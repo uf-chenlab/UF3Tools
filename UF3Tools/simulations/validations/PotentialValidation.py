@@ -219,7 +219,23 @@ class ValidationData:
                     else:
                         output += f"  {key}: {value}\n"
         return output
-
+    def to_mongo_dict(self):
+        """
+        Converts the ValidationData object to a dictionary for logging.
+        Note: This does not include the potential file content itself
+        """
+        return {
+            "potential_version": self.potential_version,
+            "potential_file": self.potential_file,
+            "structure": self.structure,
+            "validation_data": self.validation_data,
+            "normalized_error": self.normalized_error,
+            "energy_rmse": self.energy_rmse,
+            "force_rmse": self.force_rmse,
+            "relative_order_results": self.relative_order_results,
+            "raw_lammps_data": self.raw_lammps_data,
+            "raw_dft_data": self.raw_dft_data,
+        }
     def save_to_file(self, directory):
         path = os.path.join(directory, f"{self.potential_file}_{self.potential_version}_validation.txt")
         with open(path, "w") as file:

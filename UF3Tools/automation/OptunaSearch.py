@@ -10,6 +10,7 @@ import optuna
 from dask_jobqueue import SLURMCluster
 from dask.distributed import get_worker, WorkerPlugin
 from UF3Tools.common.MPAPIKey import MP_API_KEY
+from UF3Tools.automation.data_logger import DataLogger
 import uuid
 import socket
 import shutil
@@ -44,6 +45,7 @@ class AutomaterPlugin(WorkerPlugin):
         automater = ModelAutomater(**self.automater_init_args)
         automater.set_ignore_list(self.settings['ignore_list'])
         automater.set_trainer(self.settings['trainer'])
+        automater.set_filter_history(self.automater_init_args['filtered_history'])
         automater.load_existing_base_data()
         automater.load_existing_features()
         automater.load_filtered_data()
@@ -72,7 +74,7 @@ class AutomaterPlugin(WorkerPlugin):
         with open(os.path.join(data_dir, "testing.pkl"), "wb") as f:
             pickle.dump(automater.get_testing_set(), f)
         with open(os.path.join(data_dir, 'seed.txt'), 'w') as f:
-            f.write(self.random_seed)
+            f.write(str(self.random_seed))
         automater.set_dft_validation_structures(self.settings['testing_mp_structures'])
         automater.set_lammps_validation_structures(self.settings['testing_mp_structures'])
         os.chdir(trial_folder)
@@ -117,13 +119,27 @@ def distributed_train_model_and_validate(train_model_fn, validate_model_fn, para
     return validation_data, normalized_error
 
 class UF3AbstractOptunaTrainer():
-    def __init__(self, base_directory, automater, settings, job_params):
+    def __init__(self, base_directory, automater, settings, job_params, run_id):
         self.base_directory = base_directory
         self.automater = automater
         self.settings = {**settings, **job_params}
         self.client = None
         self.cluster = None
+        self.logger = DataLogger()
+        self.run_id = run_id
+    def serialize_validation_data(self, validation_data):
+        """
+        Recursively converts a ValidationData object or list of objects
+        into a JSON-serializable dictionary or list of dictionaries.
+        """
+        if isinstance(validation_data, list):
+            return [self.serialize_validation_data(data) for data in validation_data if data is not None]
+        elif isinstance(validation_data, ValidationData):
+            return validation_data.to_mongo_dict()
+        else:
+            return None
     def init_workers(self):
+        
         automater_args = {
             "directories": [],
             "run_data_path": "",
@@ -135,14 +151,15 @@ class UF3AbstractOptunaTrainer():
             "data_folder": self.automater.get_data_folder(),
             "num_cores": self.settings['cores_per_job'],
             "filtered_directory": self.automater.get_filtered_directory(),
+            "filtered_history": self.automater.get_filter_history(),
         }
         print("automater args: ", automater_args)
         self.settings['ignore_list'] = self.automater.get_ignore_list()
-        self.settings['random_seed'] = int(time.time() * 1000)
+        self.settings['random_seed'] = daily_millis()
         if self.settings.get('trainer') is None:
             self.settings['trainer'] = self.automater.get_trainer()
         
-
+        self._log_initial_data()
         dask.config.set({
             "distributed.scheduler.worker-ttl": "600 minutes",
             "distributed.client.heartbeat": "60s",
@@ -166,6 +183,44 @@ class UF3AbstractOptunaTrainer():
 
         plugin = AutomaterPlugin(automater_args, self.settings)
         self.client.register_worker_plugin(plugin, name="uf3_plugin")
+    def _log_initial_data(self):
+        """Log the initial config, datasets, and study params
+        """
+        print("logging initial data")
+        study_doc = {
+            "_id": self.run_id,
+            "study_name": self.settings.get("full_study_name", self.run_id),
+            "chemical_system": self.automater.get_chemical_system().as_dict(),
+            "status:": "RUNNING",
+            "start_time": datetime.now().isoformat(),
+            "end_time": None,
+            "best_value": None,
+            "best_params": None
+        }
+        config_doc = {
+            "_id": self.run_id,
+            "settings": self.settings,
+            "bspline_config": self.automater.get_bspline_config(),
+            "data_sources":  self.automater.get_all_filtered_labels(),
+            "loss_weights": self.settings.get('loss_weights', None),
+            "acceptable_errors": self.settings.get('acceptable_errors', None),
+            "initial_sample_weights": self.settings.get('sample_weights', None),
+            "validation_structures": self.settings.get('testing_mp_structures', None),
+            "validations_to_run": self.settings.get('validations_to_run', None),
+            "filter_history": self.automater.get_filter_history()
+        }
+    
+
+        dataset_doc = {
+            "_id": self.run_id,
+            "training_keys": self.automater.get_training_keys(),
+            "testing_keys": self.automater.get_testing_keys(),
+        }
+        
+        
+        self.logger.log_document("studies", study_doc, self.run_id)
+        self.logger.log_document("configs", config_doc, self.run_id)
+        self.logger.log_document("datasets", dataset_doc, self.run_id)
     def objective(self):
         return None
     def cleanup(self, temp_search=False):
@@ -275,61 +330,6 @@ class UF3AbstractOptunaTrainer():
             weight_energy_per_atom * norm_energy_per_atom
         )
         return loss
-    def parse_validation_data(self, validation_data, normalized_error, acceptable_errors, weights, loss_function):
-        all_data = []
-        all_results = []
-        
-        if isinstance(validation_data, list):
-            for data in validation_data:
-                all_data.append(data)
-        else:
-            all_data.append(validation_data)
-            
-        for data in all_data:
-            result = {}
-            if(isinstance(data, ValidationData)):
-                data2 = data.get_validation_data()
-                for validation_type, validation_results in data2.items():
-                    # Check if validation_results is a list of dictionaries
-                    if isinstance(validation_results, list):
-                        for res in validation_results:
-                            if isinstance(res, dict):
-                                for key, value in res.items():
-                                    if isinstance(value, (int, float)):  # Check if the value is numeric
-                                        result[key] = result.get(key, 0) + value
-                            else:
-                                print("its not a dictionary bud")  # Handle non-dictionary list items
-                    else:
-                        # Handle case where validation_results is a single dictionary
-                        for key, value in validation_results.items():
-                            if isinstance(value, (int, float)):  # Check if the value is numeric
-                                result[key] = result.get(key, 0) + value
-            else: 
-                print("validation data list is broken")
-                print(data)
-            
-            all_results.append(result)
-        
-        # Compute the average for each metric
-        avg_result = {}
-        num_results = len(all_results)
-        
-        if num_results > 0:
-            for res in all_results:
-                for key, value in res.items():
-                    avg_result[key] = avg_result.get(key, 0) + value / num_results
-        else:
-            print("no validation results")
-            return None
-        
-        final_loss = self.loss_function(avg_result, normalized_error, acceptable_errors, weights)
-        print("Final Loss:", final_loss)
-        if final_loss is None:
-            return None
-        if(final_loss <= 0.00001):
-            return None
-        else:
-            return final_loss
     def train_model( params, settings, trial_id=0):
         print("train model function")
         worker = get_worker()
@@ -484,17 +484,20 @@ class UF3AbstractOptunaTrainer():
     def parse_validation_data(self, validation_data, normalized_error, acceptable_errors, weights):
         all_data = []
         all_results = []
+        potential_name = ""
         
         if isinstance(validation_data, list):
             for data in validation_data:
                 all_data.append(data)
         else:
             all_data.append(validation_data)
+            potential_name = validation_data.get_potential_file()
             
         for data in all_data:
             result = {}
             if(isinstance(data, ValidationData)):
                 data2 = data.get_validation_data()
+                potential_name = data.get_potential_file()
                 for validation_type, validation_results in data2.items():
                     # Check if validation_results is a list of dictionaries
                     if isinstance(validation_results, list):
@@ -526,16 +529,16 @@ class UF3AbstractOptunaTrainer():
                     avg_result[key] = avg_result.get(key, 0) + value / num_results
         else:
             print("no validation results")
-            return None
+            return potential_name, None
         
         final_loss = self.loss_function(avg_result, normalized_error, acceptable_errors, weights)
         print("Final Loss:", final_loss)
         if final_loss is None:
-            return None
+            return potential_name, None
         if(final_loss <= 0.00001):
-            return None
+            return potential_name, None
         else:
-            return final_loss    
+            return potential_name, final_loss    
     def run(self, temp_search=False):
         self.init_workers()
         study = self.optimize()
@@ -546,9 +549,11 @@ class UF3AbstractOptunaTrainer():
     
 class UF3OptunaTPETrainer(UF3AbstractOptunaTrainer):
     def __init__(self, base_directory, automater, settings, job_params):
-        super().__init__(base_directory, automater, settings, job_params)
+        run_id = str(uuid.uuid4())[:32]
+        run_id_str = f"optuna_tpe_{run_id}"
+        super().__init__(base_directory, automater, settings, job_params, run_id_str)
     def get_name(self):
-        return self.settings.get("full_study_name", f"UF3_Distributed_Optuna_TPE-{uuid.uuid4().hex[:8]}")
+        return self.settings.get("full_study_name", f"UF3_Distributed_Optuna_TPE-{self.run_id}")
     def run(self, temp_search=False):
         self.init_workers()
 
@@ -557,9 +562,8 @@ class UF3OptunaTPETrainer(UF3AbstractOptunaTrainer):
             group=True,
             n_startup_trials=self.settings.get('n_startup_trials', 10)
         )
-        unique_prefix = uuid.uuid4().hex[:8]
         base_name = self.settings.get("study_name", "UF3_Distributed_Optuna")
-        full_name = f"{unique_prefix}-{base_name}"
+        full_name = f"{self.run_id}-{base_name}"
         self.settings["full_study_name"] = full_name
         study = optuna.create_study(
             sampler=sampler,
@@ -620,17 +624,32 @@ class UF3OptunaTPETrainer(UF3AbstractOptunaTrainer):
         if validation_data is None:
             return None
 
-        loss = self.parse_validation_data(
+        potential_name, loss = self.parse_validation_data(
             validation_data,
             normalized_error,
             self.settings['acceptable_errors'],
             self.settings['loss_weights']
         )
+        trial_id = f'{potential_name}'
+        serialized_validation = self.serialize_validation_data(validation_data)
+        trial_doc = {
+            "_id": self.run_id,
+            "trial_id": trial_id,
+            "trial_number": trial.number,
+            "params": trial.params,
+            "value": loss,
+            "validation_data": serialized_validation,
+            "status": "COMPLETED" if loss is not None else "FAILED",
+            "timestamp": datetime.now().isoformat()
+        }
+        self.logger.log_document("trials", trial_doc, f"{self.run_id}_{trial_id}" )
         return loss
 
 class UF3OptunaTPEFineTuningTrainer(UF3AbstractOptunaTrainer):
     def __init__(self, base_directory, automater, settings, job_params, model_path):
-        super().__init__(base_directory, automater, settings, job_params)
+        run_id = str(uuid.uuid4())[:32]
+        run_id_str = f"optuna_finetune_{run_id}"
+        super().__init__(base_directory, automater, settings, job_params, run_id_str)
         self.model_path = os.path.abspath(model_path)
 
     def run(self, temp_search=False):
@@ -642,9 +661,8 @@ class UF3OptunaTPEFineTuningTrainer(UF3AbstractOptunaTrainer):
             n_startup_trials=self.settings.get('n_startup_trials', 10)
         )
 
-        unique_prefix = uuid.uuid4().hex[:8]
         base_name = self.settings.get("study_name", "UF3_Distributed_Optuna_FineTuning")
-        full_name = f"{unique_prefix}-{base_name}"
+        full_name = f"{self.run_id}-{base_name}"
         self.settings["full_study_name"] = full_name
         study = optuna.create_study(
             sampler=sampler,
@@ -771,10 +789,23 @@ class UF3OptunaTPEFineTuningTrainer(UF3AbstractOptunaTrainer):
         if validation_data is None:
             return None
 
-        loss = self.parse_validation_data(
+        potential_name, loss = self.parse_validation_data(
             validation_data,
             normalized_error,
             self.settings['acceptable_errors'],
             self.settings['loss_weights']
         )
+        trial_id = f'{potential_name}'
+        serialized_validation = self.serialize_validation_data(validation_data)
+        trial_doc = {
+            "_id": self.run_id,
+            "trial_id": trial_id,
+            "trial_number": trial.number,
+            "params": trial.params,
+            "value": loss,
+            "validation_data": serialized_validation,
+            "status": "COMPLETED" if loss is not None else "FAILED",
+            "timestamp": datetime.now().isoformat()
+        }
+        self.logger.log_document("trials", trial_doc, f"{self.run_id}_{trial_id}" )
         return loss
