@@ -10,7 +10,7 @@ import optuna
 from dask_jobqueue import SLURMCluster
 from dask.distributed import get_worker, WorkerPlugin
 from UF3Tools.common.MPAPIKey import MP_API_KEY
-from UF3Tools.automation.data_logger import DataLogger
+from UF3Tools.automation.data_logger import LoggingSession
 import uuid
 import socket
 import shutil
@@ -125,8 +125,8 @@ class UF3AbstractOptunaTrainer():
         self.settings = {**settings, **job_params}
         self.client = None
         self.cluster = None
-        self.logger = DataLogger()
         self.run_id = run_id
+        self.logging_session = LoggingSession(self.automater, self.settings.get("full_study_name", self.run_id),)
     def serialize_validation_data(self, validation_data):
         """
         Recursively converts a ValidationData object or list of objects
@@ -187,40 +187,9 @@ class UF3AbstractOptunaTrainer():
         """Log the initial config, datasets, and study params
         """
         print("logging initial data")
-        study_doc = {
-            "_id": self.run_id,
-            "study_name": self.settings.get("full_study_name", self.run_id),
-            "chemical_system": self.automater.get_chemical_system().as_dict(),
-            "status:": "RUNNING",
-            "start_time": datetime.now().isoformat(),
-            "end_time": None,
-            "best_value": None,
-            "best_params": None
-        }
-        config_doc = {
-            "_id": self.run_id,
-            "settings": self.settings,
-            "bspline_config": self.automater.get_bspline_config(),
-            "data_sources":  self.automater.get_all_filtered_labels(),
-            "loss_weights": self.settings.get('loss_weights', None),
-            "acceptable_errors": self.settings.get('acceptable_errors', None),
-            "initial_sample_weights": self.settings.get('sample_weights', None),
-            "validation_structures": self.settings.get('testing_mp_structures', None),
-            "validations_to_run": self.settings.get('validations_to_run', None),
-            "filter_history": self.automater.get_filter_history()
-        }
-    
-
-        dataset_doc = {
-            "_id": self.run_id,
-            "training_keys": self.automater.get_training_keys(),
-            "testing_keys": self.automater.get_testing_keys(),
-        }
-        
-        
-        self.logger.log_document("studies", study_doc, self.run_id)
-        self.logger.log_document("configs", config_doc, self.run_id)
-        self.logger.log_document("datasets", dataset_doc, self.run_id)
+        self.logging_session.log_study()
+        self.logging_session.log_config(self.settings)
+        self.logging_session.log_datasets()
     def objective(self):
         return None
     def cleanup(self, temp_search=False):

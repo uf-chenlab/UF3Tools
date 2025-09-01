@@ -6,6 +6,7 @@ import io
 import pickle
 from collections.abc import Mapping 
 import math
+from UF3Tools.automation.ModelAutomater import *
 
 # Try to import libraries for both modes, but don't fail if one isn't installed.
 try:
@@ -185,39 +186,80 @@ class DataLogger:
     # --- Fallback and Recovery Logic ---
     
     def _save_locally(self, document, run_id, collection_name):
+        """Saves a document locally in the pending uploads directory."""
         run_dir = os.path.join(self.pending_uploads_dir, str(run_id))
         os.makedirs(run_dir, exist_ok=True)
-        filepath = os.path.join(run_dir, f"{collection_name}_{uuid.uuid4()}.json")
+        
+        doc_id = document.get("_id", uuid.uuid4())
+        filename = f"{collection_name}_{doc_id}.json"
+        filepath = os.path.join(run_dir, filename)
+        
         with open(filepath, 'w') as f:
             json.dump(document, f, indent=4)
         print(f"Saved document for '{collection_name}' to '{filepath}'.")
 
     def _save_dataset_locally(self, filename, dataset_obj, run_id):
+        """Saves a dataset file locally."""
         run_dir = os.path.join(self.pending_uploads_dir, str(run_id))
         os.makedirs(run_dir, exist_ok=True)
+        
         filepath = os.path.join(run_dir, filename)
         with open(filepath, 'wb') as f:
             pickle.dump(dataset_obj, f)
         print(f"Saved dataset '{filename}' locally to '{filepath}'.")
 
     def _process_pending_uploads(self):
+        """
+        Processes and uploads any locally saved files.
+        This version is corrected to avoid recursion and handle files correctly.
+        """
+        if not os.path.exists(self.pending_uploads_dir):
+            return
+
         print("Checking for pending local files to upload...")
         for run_id in os.listdir(self.pending_uploads_dir):
             run_dir = os.path.join(self.pending_uploads_dir, run_id)
-            if not os.path.isdir(run_dir): continue
             
-            for filename in os.listdir(run_dir):
+            if not os.path.isdir(run_dir):
+                continue
+            
+            files_to_process = os.listdir(run_dir)
+            if not files_to_process:
+                os.rmdir(run_dir)
+                continue
+
+            print(f"--- Processing pending run: {run_id} ---")
+            for filename in files_to_process:
                 filepath = os.path.join(run_dir, filename)
+                
+                if not os.path.isfile(filepath):
+                    continue
+
                 try:
+                    upload_successful = False
                     if filename.endswith(".json"):
                         collection_name = filename.split('_')[0]
-                        with open(filepath, 'r') as f: document = json.load(f)
-                        self.log_document(collection_name, document, run_id)
+                        with open(filepath, 'r') as f:
+                            document = json.load(f)
+                        
+                        if self.use_api:
+                            self._log_document_api(collection_name, document)
+                        else:
+                            self._log_document_db(collection_name, document)
+                        upload_successful = True
+
                     elif filename.endswith(".pkl"):
-                        with open(filepath, 'rb') as f: dataset_obj = pickle.load(f)
-                        self.log_large_dataset(filename, dataset_obj, run_id)
+                        with open(filepath, 'rb') as f:
+                            dataset_obj = pickle.load(f)
+                        
+                        # FIX: Directly call the upload method
+                        if self.use_api:
+                            self._log_dataset_api(filename, dataset_obj, run_id)
+                        else:
+                            self._log_dataset_db(filename, dataset_obj, run_id)
+                        upload_successful = True
                     
-                    if os.path.exists(filepath):
+                    if upload_successful:
                         os.remove(filepath)
                         print(f"Processed and removed pending file: {filename}")
 
@@ -242,3 +284,86 @@ class DataLogger:
         else:
             # Fallback for any other type (custom objects, etc.) is to convert to string.
             return str(doc)
+
+
+
+class LoggingSession:
+    """Helps you log to the database from single shot runs 
+    """
+    def __init__(self, automater, study_name=None):
+        self.logger = DataLogger()
+        self.automater = automater
+        self.run_id = f'single_shot_{uuid.uuid4().hex[:32]}'
+        self.study_name = study_name if study_name is not None else self.run_id,
+        self.study_doc = {
+            "_id": self.run_id,
+            "study_name": self.study_name,
+            "chemical_system": automater.get_chemical_system().as_dict(),
+            "status": "RUNNING",
+            "start_time": datetime.now().isoformat(),
+            "end_time": None,
+            "best_value": None,
+            "best_params": None
+        }
+        print(f'--- Logging session started with Run ID: {self.run_id} ---')
+    def serialize_validation_data(self, validation_data):
+        """
+        Recursively converts a ValidationData object or list of objects
+        into a JSON-serializable dictionary or list of dictionaries.
+        """
+        if isinstance(validation_data, list):
+            return [self.serialize_validation_data(data) for data in validation_data if data is not None]
+        elif isinstance(validation_data, ValidationData):
+            return validation_data.to_mongo_dict()
+        else:
+            return None
+    def log_study(self):
+        self.logger.log_document("studies", self.study_doc, self.run_id)
+    def log_config(self, settings_dict={}):
+        config_doc = {
+            "_id": self.run_id, 
+            "settings": settings_dict, 
+            "bspline_config": self.automater.get_bspline_config(),
+            "data_sources": self.automater.get_all_filtered_labels(),
+            "loss_weights": settings_dict.get('loss_weights', None),
+            "acceptable_errors": settings_dict.get('acceptable_errors', None),
+            "initial_sample_weights": settings_dict.get('sample_weights', None),
+            "validation_structures": settings_dict.get('testing_mp_structures', None),
+            "validations_to_run": settings_dict.get('validations_to_run', None),
+            "filter_history": self.automater.get_filter_history()
+        }
+        self.logger.log_document("configs", config_doc, self.run_id)
+        
+    def log_datasets(self,):
+        dataset_doc = {
+            "_id": self.run_id,
+            "training_keys": self.automater.get_training_keys(),
+            "testing_keys": self.automater.get_testing_keys()
+        }
+        self.logger.log_document("datasets", dataset_doc, self.run_id)
+        
+    def log_trial(self, potential_name, trial_number, params, loss, validation_data):
+        serialized_validation = self.serialize_validation_data(validation_data)
+        trial_id = potential_name
+        trial_doc = {
+            "_id": self.run_id,
+            "trial_id": trial_id,
+            "trial_number": trial_number,
+            "params":  params,
+            "value": loss,
+            "validation_data": serialized_validation,
+            "status": "COMPLETED",
+            "timestamp": datetime.now().isoformat()
+        }
+        self.logger.log_document("trials", trial_doc, self.run_id)
+        
+        #update the best values
+        if (self.study_doc["best_value"] is None) or (loss < self.study_doc["best_value"]):
+            self.study_doc["best_value"] = loss
+            self.study_doc["best_params"] = params,
+            self.logger.log_document("studies", self.study_doc, self.run_id)
+            
+    def log_document(self, collection_name, document, run_id):
+        self.logger.log_document(collection_name, document, run_id)
+            
+        
