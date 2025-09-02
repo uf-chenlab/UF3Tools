@@ -600,18 +600,7 @@ class UF3OptunaTPETrainer(UF3AbstractOptunaTrainer):
             self.settings['loss_weights']
         )
         trial_id = f'{potential_name}'
-        serialized_validation = self.serialize_validation_data(validation_data)
-        trial_doc = {
-            "_id": self.run_id,
-            "trial_id": trial_id,
-            "trial_number": trial.number,
-            "params": trial.params,
-            "value": loss,
-            "validation_data": serialized_validation,
-            "status": "COMPLETED" if loss is not None else "FAILED",
-            "timestamp": datetime.now().isoformat()
-        }
-        self.logger.log_document("trials", trial_doc, f"{self.run_id}_{trial_id}" )
+        self.logging_session.log_trial(trial_id, trial.number, trial.params, loss, validation_data)
         return loss
 
 class UF3OptunaTPEFineTuningTrainer(UF3AbstractOptunaTrainer):

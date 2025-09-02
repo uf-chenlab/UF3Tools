@@ -109,9 +109,9 @@ class DataLogger:
             self._process_pending_uploads()
             try:
                 if self.use_api:
-                    self._log_document_api(collection_name, document)
+                    self._log_document_api(collection_name, document, run_id)
                 else:
-                    self._log_document_db(collection_name, document)
+                    self._log_document_db(collection_name, document, run_id)
                 print(f"Successfully logged document to '{collection_name}'.")
             except Exception as e:
                 print(f"Connection available, but write failed for '{collection_name}': {e}. Saving locally.")
@@ -138,17 +138,23 @@ class DataLogger:
             self._save_dataset_locally(filename, dataset_obj, run_id)
             return None
 
-    def _log_document_api(self, collection_name, document):
-        sanitized = self._sanitize_document(document)
-        url = f"{self.api_url}/{self.db_name}/{collection_name}"
-        response = requests.post(url, headers=self.json_headers, data=json.dumps(sanitized))
-        response.raise_for_status()
+    def _log_document_api(self, collection_name, document, run_id=None):
+        try:
+            sanitized = self._sanitize_document(document)
+            url = f"{self.api_url}/{self.db_name}/{collection_name}"
+            response = requests.post(url, headers=self.json_headers, data=json.dumps(sanitized))
+            response.raise_for_status()
+        except:
+            return
 
-    def _log_document_db(self, collection_name, document):
-        if "_id" in document and isinstance(document["_id"], str):
-             try: document["_id"] = ObjectId(document["_id"])
-             except Exception: pass 
-        self.db[collection_name].replace_one({'_id': document['_id']}, document, upsert=True)
+    def _log_document_db(self, collection_name, document, run_id=None):
+        try:
+            if "_id" in document and isinstance(document["_id"], str):
+                try: document["_id"] = ObjectId(document["_id"])
+                except Exception: pass 
+            self.db[collection_name].replace_one({'_id': document['_id']}, document, upsert=True)
+        except:
+            return
 
     def _log_dataset_api(self, filename, dataset_obj, run_id):
         init_url = f"{self.api_url}/fs/{self.db_name}/initiate"
@@ -252,7 +258,7 @@ class DataLogger:
                         with open(filepath, 'rb') as f:
                             dataset_obj = pickle.load(f)
                         
-                        # FIX: Directly call the upload method
+                        
                         if self.use_api:
                             self._log_dataset_api(filename, dataset_obj, run_id)
                         else:
@@ -271,18 +277,16 @@ class DataLogger:
         Recursively sanitizes a document for BSON (DB) and JSON (API/local) serialization.
         This version correctly handles any dictionary-like object, not just standard dicts.
         """
-        # CHANGED: Use collections.abc.Mapping to correctly identify ANY dict-like object.
+
         if isinstance(doc, Mapping):
             return {str(key): self._sanitize_document(value) for key, value in doc.items()}
         
-        # CHANGED: Check for sets and tuples in addition to lists.
         elif isinstance(doc, (list, tuple, set)):
             return [self._sanitize_document(item) for item in doc]
             
         elif isinstance(doc, (str, int, float, bool, type(None))):
             return doc
         else:
-            # Fallback for any other type (custom objects, etc.) is to convert to string.
             return str(doc)
 
 
@@ -344,10 +348,11 @@ class LoggingSession:
         
     def log_trial(self, potential_name, trial_number, params, loss, validation_data):
         serialized_validation = self.serialize_validation_data(validation_data)
-        trial_id = potential_name
+        trial_id = os.path.basename(potential_name)
         trial_doc = {
-            "_id": self.run_id,
-            "trial_id": trial_id,
+            "_id": trial_id,
+            "file_path": potential_name,
+            "study_id": self.run_id,
             "trial_number": trial_number,
             "params":  params,
             "value": loss,
