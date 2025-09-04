@@ -24,6 +24,164 @@ except ImportError:
     gridfs = None
 
 
+class DatabaseReader:
+    def __init__(self, use_api=False):
+        self.use_api = use_api
+        self.db_name = os.getenv("DB_NAME", "uf3tools")
+        if self.use_api:
+            if not requests:
+                raise ImportError("The 'requests' library is required for API mode.")
+            self.api_url = os.getenv("UF3TOOLS_API_URL")
+            self.api_key = os.getenv("UF3TOOLS_API_KEY")
+            if not self.api_url or not self.api_key:
+                print("CRITICAL: In API mode, UF3TOOLS_API_URL and UF3TOOLS_API_KEY must be set.")
+            self.json_headers = {"X-API-Key": self.api_key, "Content-Type": "application/json"}
+            self.stream_headers = {"X-API-Key": self.api_key, "Content-Type": "application/octet-stream"}
+        else:
+            if not pymongo or not gridfs:
+                raise ImportError("The 'pymongo' library is required for Direct DB mode.")
+            self.mongo_uri = os.getenv("MONGO_URI", "mongodb://localhost:27017/")
+            self.client = None
+            self.db = None
+            self.fs = None
+            self.cert_file = os.getenv("MONGO_CERT_FILE")
+            self.ca_file = os.getenv("MONGO_CA_FILE")    
+
+        print(f"DatabaseReader initialized in {'API' if self.use_api else 'Direct DB'} mode.")
+        
+    def is_connected(self):
+        """Checks the connection status based on the current mode."""
+        if self.use_api:
+            try:
+                test_url = f"{self.api_url}/{self.db_name}/studies?limit=1"
+                response = requests.get(test_url, headers=self.json_headers, timeout=5)
+                return response.status_code in [200, 404]
+            except (requests.exceptions.RequestException, AttributeError):
+                return False
+        else:
+            if self.client:
+                try:
+                    self.client.admin.command('ping')
+                    return True
+                except pymongo.errors.ConnectionFailure:
+                    self.client = None
+                    return False
+            
+            try:
+                kwargs = {
+                    "serverSelectionTimeoutMS": 5000
+                }
+                if self.cert_file and self.ca_file:
+                    print("Attempting to connect to MongoDB using SSL/TLS certificates...")
+                    kwargs['tls'] = True
+                    kwargs['tlscertificatekeyfile'] = self.cert_file
+                    kwargs['tlscafile'] = self.ca_file
+                
+                self.client = pymongo.MongoClient(self.mongo_uri, tlsAllowInvalidHostnames=True, **kwargs)
+                self.client.admin.command('ping')
+                self.db = self.client[self.db_name]
+                self.fs = gridfs.GridFS(self.db)
+                print("MongoDB connection successful.")
+                return True
+            except (pymongo.errors.ConnectionFailure, pymongo.errors.ServerSelectionTimeoutError, FileNotFoundError) as e:
+                print(f"Failed to connect to MongoDB: {e}")
+                self.client = None
+                return False
+            
+    def get_potential_data(self, potential_id):
+        """Fetches a potential file from the database by its ID."""
+        if not self.is_connected():
+            print("Not connected to the database.")
+            return None
+        
+        try:
+            if self.use_api:
+                raise NotImplementedError("API mode for fetching potential data is not implemented.")
+            else:
+                database_entry = self.db['trials'].find_one({"_id": (potential_id)})
+                if not database_entry:
+                    print(f"No trial found with ID '{potential_id}'.")
+                    return None
+                else:
+                    return database_entry
+        except Exception as e:
+            print(f"Failed to retrieve potential with ID '{potential_id}': {e}")
+            return None
+    
+    def get_study_results(self, study_id):
+        """Fetches all trials associated with a given study ID."""
+        if not self.is_connected():
+            print("Not connected to the database.")
+            return []
+        
+        try:
+            if self.use_api:
+                raise NotImplementedError("API mode for fetching study results is not implemented.")
+            else:
+                trials = list(self.db['trials'].find({"study_id": study_id}))
+                return trials
+        except Exception as e:
+            print(f"Failed to retrieve trials for study ID '{study_id}': {e}")
+            return []
+        
+    def get_all_studies(self):
+        """Fetches all studies from the database."""
+        if not self.is_connected():
+            print("Not connected to the database.")
+            return []
+        try:
+            if self.use_api:
+                raise NotImplementedError("API mode for fetching all studies is not implemented.")
+            else:
+                studies = list(self.db['studies'].find({}))
+                return studies
+        except Exception as e:
+            print(f"Failed to retrieve studies: {e}")
+            return []
+        
+    def get_configuration(self, study_id):
+        """Fetches the configuration document for a given study ID."""
+        if not self.is_connected():
+            print("Not connected to the database.")
+            return None
+        
+        try:
+            if self.use_api:
+                raise NotImplementedError("API mode for fetching configuration is not implemented.")
+            else:
+                config = self.db['configs'].find_one({"_id": study_id})
+                if not config:
+                    print(f"No configuration found for study ID '{study_id}'.")
+                    return None
+                else:
+                    return config
+        except Exception as e:
+            print(f"Failed to retrieve configuration for study ID '{study_id}': {e}")
+            return None
+        
+class TrialReader:
+    def __init__(self, trial):
+        self.trial = trial
+    def get_params(self):
+        return self.trial.get('params', {})
+    def get_loss(self):
+        return self.trial.get('value', None)
+    def get_all_validation_data(self):
+        return self.trial.get('validation_data', None)
+    def get_structure_validation_data(self, structure_id):
+        validation_data = self.get_all_validation_data()
+        if not validation_data:
+            return None
+        if isinstance(validation_data, list):
+            for data in validation_data:
+                if data.get('structure') == structure_id:
+                    return data.get('validation_data', None)
+        elif isinstance(validation_data, dict):
+            if validation_data.get('structure') == structure_id:
+                return validation_data.get('validation_data', None)
+        return None
+    
+ 
 class DataLogger:
     """
     Logs data with a robust local file-based fallback system.
@@ -297,7 +455,7 @@ class LoggingSession:
     def __init__(self, automater, study_name=None):
         self.logger = DataLogger()
         self.automater = automater
-        self.run_id = f'single_shot_{uuid.uuid4().hex[:32]}'
+        self.run_id = f'{study_name}_{uuid.uuid4().hex[:32]}' if study_name is not None else f'{uuid.uuid4().hex[:32]}'
         self.study_name = study_name if study_name is not None else self.run_id,
         self.study_doc = {
             "_id": self.run_id,
@@ -327,7 +485,8 @@ class LoggingSession:
         config_doc = {
             "_id": self.run_id, 
             "settings": settings_dict, 
-            "bspline_config": self.automater.get_bspline_config(),
+            "chemical_system": self.automater.get_chemical_system().as_dict(),
+            "bspline_config": self.automater.get_bspline_config().as_dict(),
             "data_sources": self.automater.get_all_filtered_labels(),
             "loss_weights": settings_dict.get('loss_weights', None),
             "acceptable_errors": settings_dict.get('acceptable_errors', None),
