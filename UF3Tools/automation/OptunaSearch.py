@@ -91,6 +91,7 @@ class AutomaterPlugin(WorkerPlugin):
             batch_size=self.settings['batch_size'],
             num_cores=self.settings['cores_per_job']
         )
+        print("fitting data is loaded")
         # Store in worker attributes
         worker.plugins['uf3_automater'] = automater
         worker.plugins['uf3_worker_id'] = self.worker_id
@@ -163,7 +164,8 @@ class UF3AbstractOptunaTrainer():
         dask.config.set({
             "distributed.scheduler.worker-ttl": "600 minutes",
             "distributed.client.heartbeat": "60s",
-            "distributed.worker.daemon": False
+            "distributed.worker.daemon": False,
+            "distributed.nanny.start-timeout": "86400s",
         })
         self.cluster = SLURMCluster(
             account=self.settings['account'],
@@ -178,11 +180,12 @@ class UF3AbstractOptunaTrainer():
             job_script_prologue=["export DASK_DISTRIBUTED__WORKER__DAEMON=False", "export MKL_THREADING_LAYER=GNU"]        )
         print(self.cluster.job_script())
         self.client = Client(self.cluster, heartbeat_interval=30000, timeout=86400)
-        self.cluster.scale(self.settings['n_workers'])
-        self.client.wait_for_workers(self.settings['n_workers'])
-
         plugin = AutomaterPlugin(automater_args, self.settings)
         self.client.register_worker_plugin(plugin, name="uf3_plugin")
+        self.cluster.scale(self.settings['n_workers'])
+        self.client.wait_for_workers(1)
+
+        
     def _log_initial_data(self):
         """Log the initial config, datasets, and study params
         """
@@ -330,6 +333,7 @@ class UF3AbstractOptunaTrainer():
         }
 
         try:
+            print("training model from DF")
             # Train the model in parallel with some # of cores (optional)
             chemical_system, trainer_model, bspline_config, _, _,_ = automater.train_model_from_df(
                 model_filename=model_filename,
@@ -345,7 +349,7 @@ class UF3AbstractOptunaTrainer():
             return chemical_system, trainer_model, bspline_config, model_filename, potential_label
         except Exception as exc:
             return None, f"Training failed: {exc}"
-    def validate_model( settings, chemical_system, trainer_model, bspline_config, model_filename, potential_label, trial_id=0):
+    def validate_model(settings, chemical_system, trainer_model, bspline_config, model_filename, potential_label, trial_id=0):
         worker = get_worker()
         automater = worker.plugins['uf3_automater']
         worker_id = worker.plugins['uf3_worker_id']
@@ -385,7 +389,7 @@ class UF3AbstractOptunaTrainer():
             True, 
             "ntaormina", 
             "metal", 
-            "nk"
+            settings.get('knot_spacing', 'nk')
         )
         model_folder = os.path.join(os.getcwd(), "model_files")
         os.makedirs(model_folder, exist_ok=True)
@@ -689,7 +693,7 @@ class UF3OptunaTPEFineTuningTrainer(UF3AbstractOptunaTrainer):
             for pair in chemical_system.interactions_map[2]:
                 analyzer.fix_repulsion_2b(pair=pair, r_target=1.0, min_curvature=50.0)
 
-            analyzer.export_model_to_lammps("potentials/", model_filename, True, "ntaormina", "metal", "nk")
+            analyzer.export_model_to_lammps("potentials/", model_filename, True, "ntaormina", "metal", settings.get('knot_spacing', 'nk'))
             
             # Train the model in parallel with some # of cores (optional)
             chemical_system, trainer_model, bspline_config, _, _,_ = automater.fine_tune_model_from_dataframe_blend(
