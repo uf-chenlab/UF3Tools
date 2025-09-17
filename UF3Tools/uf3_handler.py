@@ -1,5 +1,6 @@
 import glob
 import os
+from itertools import combinations
 import pandas as pd
 from UF3Tools.simulations.managers.ValidationManager import ValidationManager, SingleCrystalValidationManager
 from sklearn.cluster import MiniBatchKMeans
@@ -490,7 +491,7 @@ class DataSetAnalyzer:
         plt.show()
         
 
-    def plot_force_histogram(self, bins=20, alpha=0.5, bin_range=[-10, 10]):
+    def plot_force_histogram(self, bins=20, alpha=0.5, bin_range=[-10, 10], ylim=None):
         """
         Plot histograms for the forces fx, fy, and fz with an optional bin range.
         
@@ -513,6 +514,8 @@ class DataSetAnalyzer:
             plt.xlabel(f'Force {column.upper()}')
             plt.ylabel('Frequency')
             plt.title(f'Force {column.upper()} Histogram')
+            if ylim is not None:
+                plt.ylim(ylim)
             plt.show()
 
         # Plot histograms for fx, fy, and fz with the specified bin range
@@ -1128,48 +1131,75 @@ class DataFilter:
         # export only the data that was filtered
         removed_data.to_excel('filtered_data.xlsx', index=True)
 
-    def filter_min_pair_distance_by_element(self, nn_cutoff=1.3, element='N'):
+    def filter_min_pair_distance_by_element(self, nn_cutoff: float = 1.3, element: str = 'N'):
         """
-        Removes structures that contain close element–element pairs (e.g. N–N) within nn_cutoff Å,
-        ONLY if both atoms are not near any atoms of a different type.
+        Removes structures from self.data that contain pairs of a specific element
+        closer than a given cutoff distance.
+
+        This method is optimized for performance using vectorized numpy operations.
 
         Parameters:
-            nn_cutoff (float): Distance threshold for same-element pairs (e.g., N–N).
-            element (str): Element to check for same-element short pairs.
+            nn_cutoff (float): The minimum allowed distance in Ångströms (Å)
+                            between two atoms of the specified element.
+            element (str): The chemical symbol of the element to check (e.g., 'N').
         """
-        print(f"Filtering structures with isolated {element}–{element} pairs under {nn_cutoff} Å.")
+        initial_count = len(self.data)
+        print(f"Filtering structures with {element}–{element} pairs closer than {nn_cutoff} Å...")
 
-        def has_isolated_short_pair(atoms):
-            try:
-                symbols = atoms.get_chemical_symbols()
-                n_indices = [i for i, sym in enumerate(symbols) if sym == element]
-                other_indices = [i for i, sym in enumerate(symbols) if sym != element]
+        def has_short_pair(atoms) -> bool:
+            """Checks a single atomic structure for short element-element pairs."""
+            if not hasattr(atoms, 'get_all_distances'):
+                # Handle cases where the geometry is not a valid ASE Atoms object
+                return True # Returning True ensures invalid data is removed
 
-                if len(n_indices) < 2:
-                    return False
+            # 1. Find indices of the target element
+            target_indices = [atom.index for atom in atoms if atom.symbol == element]
 
-                for i, idx1 in enumerate(n_indices):
-                    for idx2 in n_indices[i+1:]:
-                        dist = atoms.get_distance(idx1, idx2, mic=True)
-                        if dist < nn_cutoff:
-                            return True  # Both are isolated and close together — likely gas
+            # 2. Skip if there are fewer than two atoms of the element
+            if len(target_indices) < 2:
                 return False
-            except Exception as e:
-                print(f"Error in N–N filter: {e}")
-                return True
 
-        self.data = self.data[~self.data['geometry'].apply(has_isolated_short_pair)]
-        print("Filtered structures with isolated short same-element pairs.")
+            try:
+                # 3. Get the full distance matrix for the structure
+                # mic=True accounts for periodic boundary conditions
+                dist_matrix = atoms.get_all_distances(mic=True)
+                
+                # 4. Extract the sub-matrix corresponding only to the target atoms
+                sub_matrix = dist_matrix[np.ix_(target_indices, target_indices)]
+                
+                # 5. Set the diagonal to infinity to ignore self-distances (atom to itself)
+                np.fill_diagonal(sub_matrix, np.inf)
+
+                # 6. Check if any distance in the sub-matrix is below the cutoff
+                return np.any(sub_matrix < nn_cutoff)
+
+            except Exception as e:
+                # More informative error message
+                print(f"Skipping a structure due to an error in distance calculation: {e}")
+                return True # Remove structures that cause errors
+
+        # Apply the check to the 'geometry' column and get a boolean mask
+        # True for structures that have a short pair and should be removed
+        to_remove_mask = self.data['geometry'].apply(has_short_pair)
+
+        # Invert the mask to keep the structures we want
+        self.data = self.data[~to_remove_mask]
+        
+        final_count = len(self.data)
+        removed_count = initial_count - final_count
+        print(f"Filter complete. Removed {removed_count} structures. "
+            f"{final_count} structures remaining.")
+       
     def filter_isolated_pair_by_element(self, nn_cutoff=1.3, element='N'):
         """
-        Removes structures that contain close element–element pairs (e.g. N–N) within nn_cutoff Å,
+        Removes structures that contain close element-element pairs (e.g. N-N) within nn_cutoff Å,
         ONLY if both atoms are not near any atoms of a different type.
 
         Parameters:
-            nn_cutoff (float): Distance threshold for same-element pairs (e.g., N–N).
+            nn_cutoff (float): Distance threshold for same-element pairs (e.g., N-N).
             element (str): Element to check for same-element short pairs.
         """
-        print(f"Filtering structures with isolated {element}–{element} pairs under {nn_cutoff} Å.")
+        print(f"Filtering structures with isolated {element}-{element} pairs under {nn_cutoff} Å.")
 
         def has_isolated_short_pair(atoms):
             try:
@@ -1804,9 +1834,11 @@ class ModelTrainer:
         """
         self.model.fit_from_files_parallel(filenames, self.train_keys, weight=weight, batch_size=batch_size, energy_key='energy', num_cores=num_cores, progress='bar', sample_weights=sample_weights)
     def load_fitting_data(self, filenames, num_cores=1, use_cur=False):
-        return self.model.load_tables_parallel(filenames=filenames, subset=self.train_keys, num_cores=num_cores, progress='bar', use_cur=use_cur)
+        return self.model.load_and_prepare_data(filenames=filenames, subset=self.train_keys, num_cores=num_cores, progress='bar')
+        #return self.model.load_tables_parallel(filenames=filenames, subset=self.train_keys, num_cores=num_cores, progress='bar', use_cur=use_cur)
     def fit_from_dataframe(self, df, weight=0.3, batch_size=500, num_cores=1, sample_weights=None, exclude_elements=None, outlier_config=None):
-        self.model.fit_from_dataframe_parallel(df, self.train_keys, weight=weight, batch_size=batch_size, energy_key='energy', num_cores=num_cores, progress='bar', sample_weights=sample_weights, exclude_elements=exclude_elements, outlier_config=outlier_config)
+        self.model.fit_from_prepared_data(df, weight=weight, batch_size=batch_size, num_cores=num_cores)
+        #self.model.fit_from_dataframe_parallel(df, self.train_keys, weight=weight, batch_size=batch_size, energy_key='energy', num_cores=num_cores, progress='bar', sample_weights=sample_weights, exclude_elements=exclude_elements, outlier_config=outlier_config)
     def fit_by_interaction(self, interaction, filenames, weight=0.3, batch_size=500, num_cores=1, sample_weights=None):
         self.model.fit_by_interaction(filenames, self.train_keys, target_interactions=interaction, weight=weight, batch_size=batch_size, energy_key='energy', num_cores=num_cores, progress='bar', sample_weights=sample_weights)
     def fine_tune_from_dataframe_blend(self, df, alpha=0.05, weight=0.3, batch_size=500, num_cores=1, sample_weights=None, exclude_elements=None):

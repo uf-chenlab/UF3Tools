@@ -1011,13 +1011,13 @@ class ModelAutomater:
         trainer.set_training_set(training_data)
         trainer.set_testing_set(testing_data)
         self.fitting_df = trainer.load_fitting_data(features, num_cores=num_cores, use_cur=use_cur)
-        drop_columns = []
-        if exclude_elements is not None:
-            drop_columns = [
-                col for col in self.fitting_df.columns
-                if any(el.lower() in col.lower() for el in exclude_elements)
-            ]
-        self.fitting_df.drop(columns=drop_columns, inplace=True)
+        # drop_columns = []
+        # if exclude_elements is not None:
+        #     drop_columns = [
+        #         col for col in self.fitting_df.columns
+        #         if any(el.lower() in col.lower() for el in exclude_elements)
+        #     ]
+        # self.fitting_df.drop(columns=drop_columns, inplace=True)
         self.fitting_features = features
         return self.chemical_system, self.fitting_df, trainer.get_bspline_config(), features
     def train_model_from_df(self, model_filename, training_data, testing_data, regularizer, weight=0.3, batch_size=500, num_cores=1, sample_weights=None, exclude_elements=None, outlier_config=None):

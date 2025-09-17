@@ -4,6 +4,7 @@ from UF3Tools.automation.ModelAutomater import *
 import os
 import shutil
 from tqdm import tqdm
+import threading
 import math
 from dask.distributed import Client
 import optuna
@@ -20,12 +21,97 @@ import time
 import optuna
 import dask
 import pickle
+worker_init_lock = threading.Lock()
+def ensure_worker_is_initialized(automater_init_args, settings, random_seed=42):
+    """
+    Checks if the worker is ready. If not, it performs the one-time
+    heavy data preparation in a thread-safe way.
+    """
+    worker = get_worker()
+    
+    # Check if initialization is already done.
+    if hasattr(worker, 'automater_is_ready') and worker.automater_is_ready:
+        return
 
+    # If not ready, acquire a lock to prevent race conditions.
+    with worker_init_lock:
+        # Re-check after acquiring the lock, in case another task finished
+        # while this one was waiting.
+        if hasattr(worker, 'automater_is_ready') and worker.automater_is_ready:
+            return
+
+        print(f"Worker {worker.address} is performing one-time initialization...")
+        
+        # --- All your heavy data preparation code goes here ---
+        worker_hostname = socket.gethostname()
+        worker_pid = os.getpid()
+        worker_id = f"{worker_hostname}-{worker_pid}"
+        trial_folder = os.path.join(settings['base_directory'], "optuna_trials", f"worker_{worker_id}")
+        os.makedirs(trial_folder, exist_ok=True)
+        
+        automater = ModelAutomater(**automater_init_args)
+        automater.set_ignore_list(settings['ignore_list'])
+        automater.set_trainer(settings['trainer'])
+        automater.set_filter_history(automater_init_args['filtered_history'])
+        automater.load_existing_base_data()
+        automater.load_existing_features()
+        automater.load_filtered_data()
+        automater.consolidate_data()
+
+        if settings['testing_sets'] is not None:
+            automater.select_testing_set(
+                settings['testing_sets'],
+                include_in_training=False,
+                test_split_fraction=settings['train_test_split'],
+                seed=random_seed
+            )
+        else:
+            automater.split_data(
+                settings['train_test_split'],
+                settings['unique_indices'],
+                settings['unique_indices'],
+                settings['excluded_testing_sets'],
+                random_seed = random_seed
+            )
+        data_dir = os.path.join(settings['base_directory'], "data")
+        os.makedirs(data_dir, exist_ok=True)
+
+        with open(os.path.join(data_dir, "training.pkl"), "wb") as f:
+            pickle.dump(automater.get_training_set(), f)
+        with open(os.path.join(data_dir, "testing.pkl"), "wb") as f:
+            pickle.dump(automater.get_testing_set(), f)
+        with open(os.path.join(data_dir, 'seed.txt'), 'w') as f:
+            f.write(str(random_seed))
+        automater.set_dft_validation_structures(settings['testing_mp_structures'])
+        automater.set_lammps_validation_structures(settings['testing_mp_structures'])
+        os.chdir(trial_folder)
+        automater.download_validation_structures()
+        if 'formation_energy' in settings['validations_to_run']:
+            if 'formation_energy_structures' not in settings:
+                raise ValueError("formation_energy_structures not provided in settings")
+            automater.download_structures(settings['formation_energy_structures'])
+            automater.set_single_crystal_validation_structures(settings['formation_energy_structures'])
+
+        _, fitting_df, _, _ = automater.load_fitting_data(
+            automater.get_training_set(),
+            automater.get_testing_set(),
+            batch_size=settings['batch_size'],
+            num_cores=settings['cores_per_job']
+        )
+        print("fitting data is loaded")
+        
+        # Store the prepared objects on the worker
+        worker.plugins = {'uf3_automater': automater, 'uf3_worker_id': worker_id}
+        
+        # Set the flag to indicate this worker is now ready.
+        worker.automater_is_ready = True
+        print(f"Worker {worker.address} initialization complete.")
 
 class AutomaterPlugin(WorkerPlugin):
     def __init__(self, automater_init_args, settings):
         self.automater_init_args = automater_init_args
         self.settings = settings
+        self.settings['automater_init_args'] = automater_init_args
         self.random_seed=settings.get('random_seed', 42)
 
     def setup(self, worker):
@@ -43,59 +129,11 @@ class AutomaterPlugin(WorkerPlugin):
                 shutil.copytree(validation_src, validation_dst, dirs_exist_ok=True)
 
         automater = ModelAutomater(**self.automater_init_args)
-        automater.set_ignore_list(self.settings['ignore_list'])
-        automater.set_trainer(self.settings['trainer'])
-        automater.set_filter_history(self.automater_init_args['filtered_history'])
-        automater.load_existing_base_data()
-        automater.load_existing_features()
-        automater.load_filtered_data()
-        automater.consolidate_data()
-
-        if self.settings['testing_sets'] is not None:
-            automater.select_testing_set(
-                self.settings['testing_sets'],
-                include_in_training=False,
-                test_split_fraction=self.settings['train_test_split'],
-                seed=self.random_seed
-            )
-        else:
-            automater.split_data(
-                self.settings['train_test_split'],
-                self.settings['unique_indices'],
-                self.settings['unique_indices'],
-                self.settings['excluded_testing_sets'],
-                random_seed = self.random_seed
-            )
-        data_dir = os.path.join(self.settings['base_directory'], "data")
-        os.makedirs(data_dir, exist_ok=True)
-        import pickle
-        with open(os.path.join(data_dir, "training.pkl"), "wb") as f:
-            pickle.dump(automater.get_training_set(), f)
-        with open(os.path.join(data_dir, "testing.pkl"), "wb") as f:
-            pickle.dump(automater.get_testing_set(), f)
-        with open(os.path.join(data_dir, 'seed.txt'), 'w') as f:
-            f.write(str(self.random_seed))
-        automater.set_dft_validation_structures(self.settings['testing_mp_structures'])
-        automater.set_lammps_validation_structures(self.settings['testing_mp_structures'])
-        os.chdir(trial_folder)
-        automater.download_validation_structures()
-        if 'formation_energy' in self.settings['validations_to_run']:
-            if 'formation_energy_structures' not in self.settings:
-                raise ValueError("formation_energy_structures not provided in settings")
-            automater.download_structures(self.settings['formation_energy_structures'])
-            automater.set_single_crystal_validation_structures(self.settings['formation_energy_structures'])
-
-        _, fitting_df, _, _ = automater.load_fitting_data(
-            automater.get_training_set(),
-            automater.get_testing_set(),
-            batch_size=self.settings['batch_size'],
-            num_cores=self.settings['cores_per_job']
-        )
-        print("fitting data is loaded")
-        # Store in worker attributes
-        worker.plugins['uf3_automater'] = automater
-        worker.plugins['uf3_worker_id'] = self.worker_id
+       
 def distributed_train_model_and_validate(train_model_fn, validate_model_fn, params, settings, trial_id=0):
+    ensure_worker_is_initialized(settings['automater_init_args'], settings, settings.get('random_seed', 42))
+
+    # The rest of your function remains exactly the same
     worker = get_worker()
     automater = worker.plugins['uf3_automater']
 
@@ -168,6 +206,7 @@ class UF3AbstractOptunaTrainer():
             "distributed.nanny.start-timeout": "86400s",
         })
         self.cluster = SLURMCluster(
+            nanny=False,
             account=self.settings['account'],
             cores=self.settings['cores_per_job'],
             memory=self.settings['memory'],
@@ -183,7 +222,7 @@ class UF3AbstractOptunaTrainer():
         plugin = AutomaterPlugin(automater_args, self.settings)
         self.client.register_worker_plugin(plugin, name="uf3_plugin")
         self.cluster.scale(self.settings['n_workers'])
-        self.client.wait_for_workers(1)
+        self.client.wait_for_workers(self.settings['n_workers'])
 
         
     def _log_initial_data(self):
@@ -585,7 +624,7 @@ class UF3OptunaTPETrainer(UF3AbstractOptunaTrainer):
             params,
             self.settings,
             trial_id=trial.number,
-            pure=False
+            pure=False,
         )
         result = future.result()
 
