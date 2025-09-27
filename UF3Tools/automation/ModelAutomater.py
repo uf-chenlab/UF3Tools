@@ -469,6 +469,41 @@ class ModelAutomater:
             featurizer = Featurizer(data, self.chemical_system, self.bspline_config)
             featurizer.featurize_data(self.num_cores, output_file, self.feature_batch_size)
         self.load_existing_features()
+    
+    def generate_delta_features(self, existing_potentials):
+        """
+        Generate feature files for only the new ("delta") interaction terms.
+        
+        :param existing_potentials: A list of file paths to the JSON files of
+                                    existing potentials (e.g., ['AlN.json', 'GaN.json']).
+        """
+        if not existing_potentials:
+            print("No existing potentials provided. Use generate_new_features() for a full run.")
+            return
+
+        os.chdir(self.feature_directory)
+        print("--- Starting Delta Feature Generation ---")
+        print(f"Excluding terms found in: {existing_potentials}")
+
+        for label, data in self.base_data_frames.items():
+            data_type = label.replace('.pkl', '')
+            if data_type in self.data_ignore_list:
+                continue
+            
+            # Name the output file to indicate it's a delta run
+            output_file = f'df_features_delta_{data_type}.h5'
+            print(f"Generating delta features for {data_type}...")
+
+            # Use the new DeltaFeaturizer class
+            featurizer = DeltaFeaturizer(data,
+                                        self.chemical_system,
+                                        self.bspline_config,
+                                        existing_potentials)
+                                        
+            featurizer.featurize_data(self.num_cores, output_file, self.feature_batch_size)
+
+        print("--- Delta Feature Generation Complete ---")
+        self.load_existing_features() # You may need to adjust this to load the new delta files
     def clear_filtered_data(self):
         UF3FileHandler(self.filter_directory).clear_directory()
         self.filtered_data_labels = []
@@ -1028,6 +1063,27 @@ class ModelAutomater:
         trainer.fit_from_dataframe(self.fitting_df, weight=weight, batch_size=batch_size, num_cores=num_cores,sample_weights=sample_weights_final if sample_weights is not None else None, exclude_elements=exclude_elements, outlier_config=outlier_config)
         trainer.export_model(model_filename)
         return self.chemical_system, trainer.get_model(), trainer.get_bspline_config(), None, model_filename, trainer
+    def train_model_from_df_min(self, model_filename, training_data, testing_data, regularizer, weight=0.3, batch_size=500, num_cores=1, sample_weights=None, exclude_elements=None, outlier_config=None, min_distances=None):
+        sample_weights_final = self.fill_sample_weights(sample_weights)
+        trainer = ModelTrainer(self.model_data, self.chemical_system, self.bspline_config, regularizer)
+        trainer.set_training_set(training_data)
+        trainer.set_testing_set(testing_data)
+        trainer.fit_from_dataframe_min(self.fitting_df, weight=weight, batch_size=batch_size, num_cores=num_cores,sample_weights=sample_weights_final if sample_weights is not None else None, min_distances=min_distances)
+        trainer.export_model(model_filename)
+        return self.chemical_system, trainer.get_model(), trainer.get_bspline_config(), None, model_filename, trainer
+    def train_terms_from_df(self, trained_models, model_filename, training_data, testing_data, regularizer, weight=0.3, batch_size=500, num_cores=1, sample_weights=None, exclude_elements=None):
+        sample_weights_final = self.fill_sample_weights(sample_weights)
+        trainer = ModelTrainer(self.model_data, self.chemical_system, self.bspline_config, regularizer)
+        trainer.set_training_set(training_data)
+        trainer.set_testing_set(testing_data)
+        model_to_train = trainer.configure_combined_model_for_fitting(
+           trained_models=trained_models,
+        )
+        
+        trainer.fit_from_dataframe(self.fitting_df, weight=weight, batch_size=batch_size, num_cores=num_cores,sample_weights=sample_weights_final if sample_weights is not None else None, exclude_elements=exclude_elements, outlier_config=None)
+        trainer.export_model(model_filename)
+        return self.chemical_system, trainer.get_model(), trainer.get_bspline_config(), None, model_filename, trainer
+
     def fine_tune_model_from_dataframe_blend(self, trainer, model_filename, training_data, testing_data, regularizer, weight=0.3, batch_size=500, num_cores=1, sample_weights=None, exclude_elements=None, alpha=0.05):
         sample_weights_final = self.fill_sample_weights(sample_weights)
         trainer.set_training_set(training_data)
@@ -1378,7 +1434,8 @@ class ModelAutomater:
                         if(result > threshold):
                             output = False
         return output
-        
+    def get_delta_bspline(full_bspline_config, existing_model_paths):
+        return get_delta_bspline(full_bspline_config, existing_model_paths)
     def check_validation_cutoffs(self, validation_data):
         """
         Check the validation data against the cutoff values.

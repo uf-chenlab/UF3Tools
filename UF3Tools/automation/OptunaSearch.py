@@ -374,17 +374,32 @@ class UF3AbstractOptunaTrainer():
         try:
             print("training model from DF")
             # Train the model in parallel with some # of cores (optional)
-            chemical_system, trainer_model, bspline_config, _, _,_ = automater.train_model_from_df(
-                model_filename=model_filename,
-                training_data=automater.get_training_set(),
-                testing_data=automater.get_testing_set(),
-                regularizer=regularizer,
-                weight=weight,
-                batch_size=settings['batch_size'],
-                num_cores=settings['cores_per_job'],
-                sample_weights=settings['sample_weights'],
-                exclude_elements=settings['excluded_testing_elements'],
-            )
+            min_distances = settings.get('min_distances', None)
+            if min_distances is not None:
+                chemical_system, trainer_model, bspline_config, _, _,_ = automater.train_model_from_df_min(
+                    model_filename=model_filename,
+                    training_data=automater.get_training_set(),
+                    testing_data=automater.get_testing_set(),
+                    regularizer=regularizer,
+                    weight=weight,
+                    batch_size=settings['batch_size'],
+                    num_cores=settings['cores_per_job'],
+                    sample_weights=settings['sample_weights'],
+                    exclude_elements=settings['excluded_testing_elements'],
+                    min_distances=min_distances
+                )
+            else:
+                chemical_system, trainer_model, bspline_config, _, _,_ = automater.train_model_from_df(
+                    model_filename=model_filename,
+                    training_data=automater.get_training_set(),
+                    testing_data=automater.get_testing_set(),
+                    regularizer=regularizer,
+                    weight=weight,
+                    batch_size=settings['batch_size'],
+                    num_cores=settings['cores_per_job'],
+                    sample_weights=settings['sample_weights'],
+                    exclude_elements=settings['excluded_testing_elements'],
+                )
             return chemical_system, trainer_model, bspline_config, model_filename, potential_label
         except Exception as exc:
             return None, f"Training failed: {exc}"

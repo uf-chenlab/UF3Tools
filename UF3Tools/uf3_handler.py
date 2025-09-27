@@ -1,4 +1,5 @@
 import glob
+import copy
 import os
 from itertools import combinations
 import pandas as pd
@@ -10,10 +11,12 @@ import numpy as np
 import matplotlib.pyplot as plt
 from uf3.util.json_io import *
 from uf3.data import io
+from ase.neighborlist import neighbor_list
 from uf3.data import geometry
 from uf3.data import composition
 from uf3.representation import bspline
 from uf3.representation import process
+from uf3.representation.process import *
 from uf3.regression import least_squares
 from uf3.forcefield import calculator
 from scipy.linalg import svd
@@ -1131,12 +1134,11 @@ class DataFilter:
         # export only the data that was filtered
         removed_data.to_excel('filtered_data.xlsx', index=True)
 
-    def filter_min_pair_distance_by_element(self, nn_cutoff: float = 1.3, element: str = 'N'):
+
+    def filter_min_pair_distance_by_element(self, nn_cutoff: float = 2.5, element: str = 'N'):
         """
         Removes structures from self.data that contain pairs of a specific element
-        closer than a given cutoff distance.
-
-        This method is optimized for performance using vectorized numpy operations.
+        closer than a given cutoff distance, using a robust neighbor list method.
 
         Parameters:
             nn_cutoff (float): The minimum allowed distance in Ångströms (Å)
@@ -1146,43 +1148,37 @@ class DataFilter:
         initial_count = len(self.data)
         print(f"Filtering structures with {element}–{element} pairs closer than {nn_cutoff} Å...")
 
-        def has_short_pair(atoms) -> bool:
-            """Checks a single atomic structure for short element-element pairs."""
-            if not hasattr(atoms, 'get_all_distances'):
-                # Handle cases where the geometry is not a valid ASE Atoms object
-                return True # Returning True ensures invalid data is removed
-
-            # 1. Find indices of the target element
-            target_indices = [atom.index for atom in atoms if atom.symbol == element]
-
-            # 2. Skip if there are fewer than two atoms of the element
-            if len(target_indices) < 2:
-                return False
-
+        def has_short_pair_fixed(atoms) -> bool:
+            """
+            Checks a single atomic structure for short element-element pairs
+            using a periodic-boundary-aware neighbor list.
+            """
             try:
-                # 3. Get the full distance matrix for the structure
-                # mic=True accounts for periodic boundary conditions
-                dist_matrix = atoms.get_all_distances(mic=True)
-                
-                # 4. Extract the sub-matrix corresponding only to the target atoms
-                sub_matrix = dist_matrix[np.ix_(target_indices, target_indices)]
-                
-                # 5. Set the diagonal to infinity to ignore self-distances (atom to itself)
-                np.fill_diagonal(sub_matrix, np.inf)
+                # 1. Create a set of indices for the target element for fast lookups.
+                target_indices = {atom.index for atom in atoms if atom.symbol == element}
+                if len(target_indices) < 2:
+                    return False
 
-                # 6. Check if any distance in the sub-matrix is below the cutoff
-                return np.any(sub_matrix < nn_cutoff)
+                # 2. Build a neighbor list containing all pairs of atoms (any element)
+                # that are closer than the cutoff distance. This correctly handles PBC.
+                # 'ij' returns two arrays: one for the 'i' index, one for the 'j'.
+                idx_i, idx_j = neighbor_list('ij', atoms, nn_cutoff)
 
+                # 3. Iterate through the found pairs and check if both atoms in a pair
+                # are of the target element.
+                for i, j in zip(idx_i, idx_j):
+                    if i in target_indices and j in target_indices:
+                        return True # Found a short pair of the target element.
+
+                # 4. If the loop completes, no short pairs were found.
+                return False
             except Exception as e:
-                # More informative error message
-                print(f"Skipping a structure due to an error in distance calculation: {e}")
-                return True # Remove structures that cause errors
+                print(f"Skipping a structure due to an error in neighbor list calculation: {e}")
+                # Return True to remove potentially problematic structures.
+                return True
 
-        # Apply the check to the 'geometry' column and get a boolean mask
-        # True for structures that have a short pair and should be removed
-        to_remove_mask = self.data['geometry'].apply(has_short_pair)
-
-        # Invert the mask to keep the structures we want
+        # Apply the check and filter the data
+        to_remove_mask = self.data['geometry'].apply(has_short_pair_fixed)
         self.data = self.data[~to_remove_mask]
         
         final_count = len(self.data)
@@ -1659,7 +1655,25 @@ class Featurizer:
             progress="bar",
             table_template=table_template
         )
+class DeltaFeaturizer(Featurizer):
+    def __init__(self, data, chemical_system, bspline_config, existing_potentials):
+        """
+        Initialize the DeltaFeaturizer.
+
+        :param data: DataFrame containing parsed data.
+        :param chemical_system: The target chemical system (e.g., Al-Ga-N).
+        :param bspline_config: The bspline config for the target system.
+        :param existing_potentials: List of file paths to existing potential JSONs.
+        """
+        self.data = data
+        self.chemical_system = chemical_system
+        self.bspline_config = bspline_config
         
+        # The only change is here: Instantiate DeltaBasisFeaturizer
+        self.representation = process.DeltaBasisFeaturizer(
+            copy.deepcopy(self.bspline_config),
+            existing_potentials=existing_potentials
+        )     
 class ModelTrainer:
     def __init__(self, data, chemical_system, bspline_config, regularizer):
         """
@@ -1839,6 +1853,12 @@ class ModelTrainer:
     def fit_from_dataframe(self, df, weight=0.3, batch_size=500, num_cores=1, sample_weights=None, exclude_elements=None, outlier_config=None):
         self.model.fit_from_prepared_data(df, weight=weight, batch_size=batch_size, num_cores=num_cores)
         #self.model.fit_from_dataframe_parallel(df, self.train_keys, weight=weight, batch_size=batch_size, energy_key='energy', num_cores=num_cores, progress='bar', sample_weights=sample_weights, exclude_elements=exclude_elements, outlier_config=outlier_config)
+    def fit_from_dataframe_min(self, df, weight=0.3, batch_size=500, num_cores=1, sample_weights=None, min_distances=None):
+        self.model.fit_from_prepared_data(df, weight=weight, batch_size=batch_size, num_cores=num_cores)
+        if min_distances is not None:
+            for pair, dist in min_distances.items():
+                
+                self.model.postshape_repulsion_2b(pair, r_join=dist, target=15, smooth_span=0.2)
     def fit_by_interaction(self, interaction, filenames, weight=0.3, batch_size=500, num_cores=1, sample_weights=None):
         self.model.fit_by_interaction(filenames, self.train_keys, target_interactions=interaction, weight=weight, batch_size=batch_size, energy_key='energy', num_cores=num_cores, progress='bar', sample_weights=sample_weights)
     def fine_tune_from_dataframe_blend(self, df, alpha=0.05, weight=0.3, batch_size=500, num_cores=1, sample_weights=None, exclude_elements=None):
@@ -1846,6 +1866,14 @@ class ModelTrainer:
         Fine-tune the model using a DataFrame with blended data.
         """
         self.model.fine_tune_from_dataframe_blend(df, self.train_keys, alpha=alpha, weight=weight, batch_size=batch_size, energy_key='energy', num_cores=num_cores, progress='bar', sample_weights=sample_weights, exclude_elements=exclude_elements)
+    def configure_combined_model_for_fitting(self, trained_models):
+        model_to_train = self.model.configure_combined_model_for_fitting(
+            trained_models,
+            self.bspline_config
+        )
+        self.model = model_to_train
+        return model_to_train
+    
     def export_model(self, filename):
         """
         Export the model to a file.
@@ -2927,3 +2955,7 @@ class UF3LammpsPotentialGenerator:
         with open(full_path, "w") as fp:
             for content in files.values():
                 fp.write(content)
+
+
+def get_delta_bspline(full_bspline_config, existing_model_paths):
+    return get_delta_bspline_config(full_bspline_config, existing_model_paths)

@@ -252,50 +252,81 @@ class WurtziteBuilder:
                         })
         print(f"Successfully built crystal with {len(self.atoms)} atoms.")
 
-    def write_lammps_data(self, output_file, padding=0.0):
+    def write_lammps_data(self, output_file, masses, padding=0.0):
         """
         Writes the generated atom data to a file in LAMMPS data format.
 
         Args:
             output_file (str): The path to the output data file.
+            masses (dict): A dictionary mapping atom type IDs (int) to their masses (float).
             padding (float): Extra padding to add to the simulation box boundaries.
+                           Note: The original code had different hardcoded padding
+                           for each axis. This has been preserved.
         """
-        if not self.atoms:
+        if not hasattr(self, 'atoms') or not self.atoms:
             print("Warning: No atoms have been generated. Call build_crystal() first.")
             return
 
-        # Determine simulation box boundaries
-        coords = np.array([atom['x'] for atom in self.atoms])
-        xlo, xhi = coords.min(), coords.max()
-        coords = np.array([atom['y'] for atom in self.atoms])
-        ylo, yhi = coords.min(), coords.max()
-        coords = np.array([atom['z'] for atom in self.atoms])
-        zlo, zhi = coords.min(), coords.max()
+        if not masses or not isinstance(masses, dict):
+            print("Error: A non-empty dictionary of masses must be provided.")
+            return
+
+        # --- New logic to remove top and bottom layers ---
+        # First, find the initial min and max z-coordinates to identify the layers
+        initial_coords_z = np.array([atom['z'] for atom in self.atoms])
+        if initial_coords_z.size == 0:
+            print("Warning: Atom list is empty before processing.")
+            return
+            
+        initial_zlo, initial_zhi = initial_coords_z.min(), initial_coords_z.max()
+
+        # Filter the atoms, keeping only those not in the absolute top or bottom z-layer.
+        # This is crucial for non-periodic Z boundaries to remove incomplete unit cells.
+        filtered_atoms = [
+            atom for atom in self.atoms 
+            if not np.isclose(atom['z'], initial_zlo) and not np.isclose(atom['z'], initial_zhi)
+        ]
+
+        if not filtered_atoms:
+            print("Warning: Filtering removed all atoms. The structure may only have two layers.")
+            return
+        # --- End of new logic ---
+
+        # Determine simulation box boundaries using the NEW, filtered list of atoms
+        coords_x = np.array([atom['x'] for atom in filtered_atoms])
+        xlo, xhi = coords_x.min(), coords_x.max()
+        coords_y = np.array([atom['y'] for atom in filtered_atoms])
+        ylo, yhi = coords_y.min(), coords_y.max()
+        coords_z = np.array([atom['z'] for atom in filtered_atoms])
+        zlo, zhi = coords_z.min(), coords_z.max()
         
 
         with open(output_file, 'w') as f:
             # Header
             f.write(f"{self.title}\n\n")
-            f.write(f"{len(self.atoms):10d} atoms\n")
-            f.write(f"{2:10d} atom types\n\n") # Hardcoded as 2 types from FORTRAN
+            f.write(f"{len(filtered_atoms):10d} atoms\n") # Use count of filtered atoms
+            f.write(f"{len(masses):10d} atom types\n\n") # Set atom types from masses dict
 
-            # Box dimensions
+            # Box dimensions (using original hardcoded padding on the new boundaries)
             f.write(f"{xlo - 1:15.6f} {xhi + 1:15.6f} xlo xhi\n")
             f.write(f"{ylo - 0.65:15.6f} {yhi + 0.65:15.6f} ylo yhi\n")
             f.write(f"{zlo - 0.3:15.6f} {zhi + 0.3:15.6f} zlo zhi\n\n")
 
-            # Masses - hardcoded from the FORTRAN file
+            # Masses - written from the provided dictionary
             f.write("Masses\n\n")
-            f.write(f"{1:10d} {26.981:20.6f}\n") # Al
-            f.write(f"{2:10d} {14.0067:20.6f}\n\n") # N
+            # Sort by atom type for a consistently ordered file
+            for atom_type, mass_value in sorted(masses.items()):
+                f.write(f"{atom_type:10d} {mass_value:20.6f}\n")
+            f.write("\n")
 
-            # Atoms
+            # Atoms - written from the filtered list
             f.write("Atoms\n\n")
-            for atom in self.atoms:
+            # Re-number atom IDs to be sequential (1, 2, 3, ...) after filtering
+            for i, atom in enumerate(filtered_atoms, 1):
                 f.write(
-                    f"{atom['id']:10d} {atom['type']:3d} {atom['x']:20.6f} {atom['y']:20.6f} {atom['z']:20.6f}\n"
+                    f"{i:10d} {atom['type']:3d} {atom['x']:20.6f} {atom['y']:20.6f} {atom['z']:20.6f}\n"
                 )
-        
+    
         print(f"LAMMPS data file written to '{output_file}'.")
 
 class LAMMPSModifier:
