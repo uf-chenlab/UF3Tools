@@ -95,7 +95,7 @@ class DefectEnergyValidation(PotentialValidation):
             dft_dict[defect_type] = {
                 "cohesive_energy": epa
             }
-        output_dict['dft'] = dft_dict
+        self.dft_results = dft_dict
         for defect_type, defect_data in self.lammps_data.items():
             if defect_data is None:
                 continue
@@ -103,7 +103,41 @@ class DefectEnergyValidation(PotentialValidation):
             lammps_dict[defect_type] = {
                 "cohesive_energy": cohesive_energy
             }
-        output_dict['lammps'] = lammps_dict
+        self.lammps_results = lammps_dict
+        
+        #compare delta energy between each defect type and the perfect structure (defecttype none)
+        dft_perfect = self.dft_results.get('DefectType.None', {}).get('cohesive_energy', None)
+        lammps_perfect = self.lammps_results.get('DefectType.None', {}).get('cohesive_energy', None)
+        if dft_perfect is not None and lammps_perfect is not None:
+            for defect_type in self.dft_results.keys():
+                if defect_type == 'DefectType.None':
+                    continue
+                dft_defect_energy = self.dft_results[defect_type]['cohesive_energy']
+                lammps_defect_energy = self.lammps_results.get(defect_type, {}).get('cohesive_energy', None)
+                if dft_defect_energy is not None and lammps_defect_energy is not None:
+                    abs_delta_dft = dft_defect_energy - dft_perfect
+                    abs_delta_lammps = lammps_defect_energy - lammps_perfect
+                    percent_delta_dft = (abs_delta_dft / abs(dft_perfect)) * 100 if dft_perfect != 0 else None
+                    percent_delta_lammps = (abs_delta_lammps / abs(lammps_perfect)) * 100 if lammps_perfect != 0 else None
+                    abs_error = abs(abs_delta_dft - abs_delta_lammps)/abs(abs_delta_dft) * 100 if abs_delta_dft != 0 else None
+                    percent_error = abs(percent_delta_dft - percent_delta_lammps)/abs(percent_delta_dft) * 100 if percent_delta_dft is not None and percent_delta_lammps is not None and percent_delta_dft != 0 else None
+                    output_dict[defect_type] = {
+                        'abs_error': abs_error,
+                        'percent_error': percent_error,
+                        'percent_delta_dft': percent_delta_dft,
+                        'percent_delta_lammps': percent_delta_lammps,
+                        'abs_delta_dft': abs_delta_dft,
+                        'abs_delta_lammps': abs_delta_lammps,
+                        'dft_perfect': dft_perfect,
+                        'lammps_perfect': lammps_perfect,
+                        'dft_defect_energy': dft_defect_energy,
+                        'lammps_defect_energy': lammps_defect_energy,
+                    }
+                    self.dft_results[defect_type]['delta_cohesive_energy'] = abs_delta_dft
+                    self.lammps_results[defect_type]['delta_cohesive_energy'] = abs_delta_lammps
+                    self.dft_results[defect_type]['percent_delta_cohesive_energy'] = percent_delta_dft
+                    self.lammps_results[defect_type]['percent_delta_cohesive_energy'] = percent_delta_lammps
+                    self.lammps_results[defect_type]['abs_error'] = abs_error
         return output_dict
 
     

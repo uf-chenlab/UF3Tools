@@ -130,7 +130,7 @@ class AutomaterPlugin(WorkerPlugin):
 
         automater = ModelAutomater(**self.automater_init_args)
        
-def distributed_train_model_and_validate(train_model_fn, validate_model_fn, params, settings, trial_id=0):
+def distributed_train_model_and_validate(train_model_fn, validate_model_fn, params, settings, test_prediction=True, trial_id=0):
     ensure_worker_is_initialized(settings['automater_init_args'], settings, settings.get('random_seed', 42))
 
     # The rest of your function remains exactly the same
@@ -150,7 +150,7 @@ def distributed_train_model_and_validate(train_model_fn, validate_model_fn, para
     chem_sys, trainer_model, bspline_config, model_filename, potential_label = train_result
 
     validation_data, normalized_error = validate_model_fn(
-       settings, chem_sys, trainer_model, bspline_config, model_filename, potential_label, trial_id
+       settings, chem_sys, trainer_model, bspline_config, model_filename, potential_label, test_prediction, trial_id
     )
     print("Validation data returned:", validation_data)
     print("Normalized error:", normalized_error)
@@ -161,6 +161,7 @@ class UF3AbstractOptunaTrainer():
     def __init__(self, base_directory, automater, settings, job_params, run_id):
         self.base_directory = base_directory
         self.automater = automater
+        print("abstract optuna worker automater bspline: ", self.automater.get_bspline_config())
         self.settings = {**settings, **job_params}
         self.client = None
         self.cluster = None
@@ -178,7 +179,7 @@ class UF3AbstractOptunaTrainer():
         else:
             return None
     def init_workers(self):
-        
+        print("init worker automater bspline: ", self.automater.get_bspline_config())
         automater_args = {
             "directories": [],
             "run_data_path": "",
@@ -403,7 +404,7 @@ class UF3AbstractOptunaTrainer():
             return chemical_system, trainer_model, bspline_config, model_filename, potential_label
         except Exception as exc:
             return None, f"Training failed: {exc}"
-    def validate_model(settings, chemical_system, trainer_model, bspline_config, model_filename, potential_label, trial_id=0):
+    def validate_model(settings, chemical_system, trainer_model, bspline_config, model_filename, potential_label, test_prediction=True, trial_id=0):
         worker = get_worker()
         automater = worker.plugins['uf3_automater']
         worker_id = worker.plugins['uf3_worker_id']
@@ -427,13 +428,16 @@ class UF3AbstractOptunaTrainer():
             analyzer.fix_repulsion_2b(pair=pair, r_target=1.0, min_curvature=50.0)
         normalized_error=0
         result = None
-        if(settings['loss_weights']['error'] == 0):
-            normalized_error = 0
-        else:
-            result = analyzer.test_model_prediction(training=False)
-            normalized_error= 0.5*((result['rmse_e']/result['sigma_e']) + (result['rmse_f']/result['sigma_f']))
+        if test_prediction:
+            if(settings['loss_weights']['error'] == 0):
+                normalized_error = 0
+            else:
+                result = analyzer.test_model_prediction(training=False)
+                normalized_error= 0.5*((result['rmse_e']/result['sigma_e']) + (result['rmse_f']/result['sigma_f']))
             normalized_error = 0.5*(result['rmse_e'] + result['rmse_f'])
             #normalized_error=0
+        else:
+            normalized_error=0
         
 
         potential_file = os.path.join(os.getcwd(), "potentials", model_filename)
@@ -492,7 +496,7 @@ class UF3AbstractOptunaTrainer():
         automater.store_validation_data_alternate_dir(model_filename, validation_data, os.getcwd())
         print("validation data stored")
         return validation_data, normalized_error
-    def train_model_and_validate( params, settings, trial_id=0, pure=False):
+    def train_model_and_validate( params, settings, trial_id=0, test_prediction=True, pure=False):
         worker = get_worker()
         automater = worker.plugins['uf3_automater']
         worker_id = worker.plugins['uf3_worker_id']
@@ -506,7 +510,7 @@ class UF3AbstractOptunaTrainer():
             return None
         chemical_system, trainer_model, bspline_config, model_filename, potential_label = train_result
         validation_data, normalized_error = self.validate_model(
-            settings, chemical_system, trainer_model, bspline_config, model_filename, potential_label, trial_id)
+            settings, chemical_system, trainer_model, bspline_config, model_filename, potential_label, test_prediction=test_prediction, trial_id=trial_id)
         return validation_data, normalized_error
     def parse_validation_data(self, validation_data, normalized_error, acceptable_errors, weights):
         all_data = []
@@ -639,6 +643,7 @@ class UF3OptunaTPETrainer(UF3AbstractOptunaTrainer):
             params,
             self.settings,
             trial_id=trial.number,
+            test_prediction=True,
             pure=False,
         )
         result = future.result()
@@ -793,6 +798,7 @@ class UF3OptunaTPEFineTuningTrainer(UF3AbstractOptunaTrainer):
             params,
             self.settings,
             trial_id=trial.number,
+            test_prediction=True,
             pure=False
         )
         result = future.result()
@@ -824,4 +830,122 @@ class UF3OptunaTPEFineTuningTrainer(UF3AbstractOptunaTrainer):
             "timestamp": datetime.now().isoformat()
         }
         self.logger.log_document("trials", trial_doc, f"{self.run_id}_{trial_id}" )
+        return loss
+    
+class UF3OptunaDeltaTrainer(UF3AbstractOptunaTrainer):
+    def __init__(self, base_directory, automater, settings, job_params, existing_models, full_bspline_config):
+        run_id = str(uuid.uuid4())[:32]
+        run_id_str = f"optuna_delta_{run_id}"
+        print("delta automater bspline: ", automater.get_bspline_config())
+        super().__init__(base_directory, automater, settings, job_params, run_id_str)
+        self.existing_models = existing_models
+        self.full_bspline_config = full_bspline_config
+
+    def run(self, temp_search=False):
+        self.init_workers()
+        sampler = optuna.samplers.TPESampler(
+            multivariate=True,
+            group=True,
+            n_startup_trials=self.settings.get('n_startup_trials', 10)
+        )
+        base_name = self.settings.get("study_name", "UF3_Distributed_Optuna_Delta")
+        full_name = f"{self.run_id}-{base_name}"
+        self.settings["full_study_name"] = full_name
+        study = optuna.create_study(
+            sampler=sampler,
+            study_name=self.settings["full_study_name"],
+            direction="minimize"
+        )
+        study.optimize(
+            lambda trial: self.objective(trial),
+            n_trials=self.settings.get('n_trials', 2),
+            n_jobs=self.settings.get('n_workers', 2)
+        )
+        print("Best value:", study.best_value)
+        print("Best params:", study.best_params)
+        self.client.close()
+        self.cluster.close()
+        self.cleanup(temp_search)
+        return study
+
+    @staticmethod
+    def train_model(params, settings, trial_id=0):
+        worker = get_worker()
+        automater = worker.plugins['uf3_automater']
+        (ridge_1b, ridge_2b, ridge_3b, curvature_2b, curvature_3b, weight) = params
+        potential_label = (
+            f"trial_{trial_id}_r1b_{ridge_1b}_r2b_{ridge_2b}_r3b_{ridge_3b}_"
+            f"curv2b_{curvature_2b}_curv3b_{curvature_3b}_w_{weight}"
+        )
+        unique_id = str(uuid.uuid4())[:32]
+        model_filename = f"model_{unique_id}"
+        potential_label = f'{unique_id}_{potential_label}'
+        regularizer = {
+            "ridge_1b": ridge_1b,
+            "ridge_2b": ridge_2b,
+            "ridge_3b": ridge_3b,
+            "curvature_2b": curvature_2b,
+            "curvature_3b": curvature_3b
+        }
+        try:
+            _, _, _, _, _, trainer = automater.train_terms_from_df(
+                trained_models=settings['existing_models'],
+                model_filename=model_filename,
+                training_data=automater.get_training_set(),
+                testing_data=automater.get_testing_set(),
+                regularizer=regularizer,
+                full_bspline_config=settings['full_bspline_config'],
+                weight=weight,
+                batch_size=settings['batch_size'],
+                num_cores=settings['cores_per_job'],
+                sample_weights=settings['sample_weights'],
+                exclude_elements=settings.get('excluded_testing_elements')
+            )
+            final_model = trainer.get_model()
+            final_bspline_config = trainer.get_bspline_config()
+            final_chemical_system = final_bspline_config.chemical_system
+
+            return final_chemical_system, final_model, final_bspline_config, model_filename, potential_label
+
+        except Exception as exc:
+            print(f"Training failed for trial {trial_id}: {exc}")
+            return None, None, None, None, None
+
+    def objective(self, trial):
+        ridge_1b = trial.suggest_float("ridge_1b", 1e-9, 1e-2, log=True)
+        ridge_2b = trial.suggest_float("ridge_2b", 1e-9, 1e-2, log=True)
+        ridge_3b = trial.suggest_float("ridge_3b", 1e-9, 1e-2, log=True)
+        curvature_2b = trial.suggest_float("curvature_2b", 1e-9, 1e-2, log=True)
+        curvature_3b = trial.suggest_float("curvature_3b", 1e-9, 1e-2, log=True)
+        weight = trial.suggest_float("weight", 0.01, 1.0, log=False)
+        params = (ridge_1b, ridge_2b, ridge_3b, curvature_2b, curvature_3b, weight)
+        
+        self.settings['existing_models'] = self.existing_models
+        self.settings['full_bspline_config'] = self.full_bspline_config
+
+        future = self.client.submit(
+            distributed_train_model_and_validate,
+            UF3OptunaDeltaTrainer.train_model,
+            UF3OptunaDeltaTrainer.validate_model,
+            params,
+            self.settings,
+            trial_id=trial.number,
+            test_prediction=False,
+            pure=False,
+        )
+        result = future.result()
+        if isinstance(result, tuple) and len(result) == 2:
+            validation_data, normalized_error = result
+        else:
+            return None
+        if validation_data is None:
+            return None
+        potential_name, loss = self.parse_validation_data(
+            validation_data,
+            normalized_error,
+            self.settings['acceptable_errors'],
+            self.settings['loss_weights']
+        )
+        trial_id = f'{potential_name}'
+        self.logging_session.log_trial(trial_id, trial.number, trial.params, loss, validation_data)
         return loss

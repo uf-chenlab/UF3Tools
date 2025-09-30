@@ -253,8 +253,16 @@ class ValidationData:
             file.write("Raw LAMMPS Data:\n")
             for validation_type, data_list in self.raw_lammps_data.items():
                 file.write(f"  {validation_type}:\n")
-                for data in data_list:
-                    for k, v in data.items():
+                if isinstance(data_list, list):
+                    for data in data_list:
+                        if isinstance(data, dict):
+                            for k, v in data.items():
+                                file.write(f"    {k}: {v}\n")
+                        elif isinstance(data, list):
+                            for item in data:
+                                file.write(f"    {item}\n")
+                elif isinstance(data_list, dict):
+                    for k, v in data_list.items():
                         file.write(f"    {k}: {v}\n")
 
         # Save DFT data
@@ -265,8 +273,16 @@ class ValidationData:
             file.write("Raw DFT Data:\n")
             for validation_type, data_list in self.raw_dft_data.items():
                 file.write(f"  {validation_type}:\n")
-                for data in data_list:
-                    for k, v in data.items():
+                if isinstance(data_list, list):
+                    for data in data_list:
+                        if isinstance(data, dict):
+                            for k, v in data.items():
+                                file.write(f"    {k}: {v}\n")
+                        elif isinstance(data, list):
+                            for item in data:
+                                file.write(f"    {item}\n")
+                elif isinstance(data_list, dict):
+                    for k, v in data_list.items():
                         file.write(f"    {k}: {v}\n")
         
 class ValidationDataCompare:
