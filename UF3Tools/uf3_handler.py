@@ -1868,12 +1868,13 @@ class ModelTrainer:
         """
         self.model.fine_tune_from_dataframe_blend(df, self.train_keys, alpha=alpha, weight=weight, batch_size=batch_size, energy_key='energy', num_cores=num_cores, progress='bar', sample_weights=sample_weights, exclude_elements=exclude_elements)
     def configure_combined_model_for_fitting(self, trained_models):
-        model_to_train = self.model.configure_combined_model_for_fitting(
+        model_to_train, bspline = self.model.configure_combined_model_for_fitting(
             trained_models,
             self.bspline_config
         )
         self.model = model_to_train
-        return model_to_train
+        self.bspline_config = bspline
+        return model_to_train, bspline
     def finalize_combined_model(self, 
                                 full_bspline_config: BSplineBasis, 
                                 existing_model_paths: List[str]):
@@ -1885,14 +1886,13 @@ class ModelTrainer:
             raise RuntimeError("The current model has not been trained yet. Cannot finalize.")
 
         delta_model = self.model
-        
-        # 1. Get the layout for the final, complete model.
+        print(delta_model.as_dict()['coefficients'][('N', 'N', 'N')])
         full_partitions, full_offsets = full_bspline_config.get_interaction_partitions()
         final_coefficients = np.zeros(sum(full_partitions.values()))
         
+        
         print("--- Finalizing Combined Model ---")
 
-        # 2. Place coefficients from existing models, using the new static helpers.
         for model_path in existing_model_paths:
             print(f"Loading coefficients from: {model_path}")
             with open(model_path, 'r') as f:
@@ -1901,11 +1901,10 @@ class ModelTrainer:
             
             for key in ['knots_map', 'r_min_map', 'r_max_map', 'resolution_map', 'coefficients']:
                 if key in model_dict:
-                    # Call the static method from the model class to decode keys
                     model_dict[key] = process.decode_interaction_map(model_dict[key])
             
-            # Now, create the model and config from the corrected dictionary
             sub_model = least_squares.WeightedLinearModel.from_json(model_path)
+            print(sub_model.as_dict()['coefficients'][('N', 'N', 'N')])
             sub_config = bspline.BSplineBasis.from_config(model_dict)
             sub_partitions, sub_offsets = sub_config.get_interaction_partitions()
 
@@ -1916,7 +1915,6 @@ class ModelTrainer:
                     final_coefficients[dest_start : dest_start + size] = \
                         sub_model.coefficients[sub_start : sub_start + size]
 
-        # 3. Place coefficients from the new delta model.
         print("Loading coefficients from the newly trained delta model...")
         delta_partitions, delta_offsets = delta_model.bspline_config.get_interaction_partitions()
 
@@ -1929,7 +1927,6 @@ class ModelTrainer:
                 final_coefficients[dest_start : dest_start + size] = \
                     delta_model.coefficients[delta_start : delta_start + size]
             
-        # 4. Create and store the final, complete model.
         final_model = least_squares.WeightedLinearModel(full_bspline_config)
         final_model.coefficients = final_coefficients
         

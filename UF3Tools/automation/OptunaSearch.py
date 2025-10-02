@@ -92,7 +92,7 @@ def ensure_worker_is_initialized(automater_init_args, settings, random_seed=42):
             automater.download_structures(settings['formation_energy_structures'])
             automater.set_single_crystal_validation_structures(settings['formation_energy_structures'])
 
-        _, fitting_df, _, _ = automater.load_fitting_data(
+        _, _, _, _ = automater.load_fitting_data(
             automater.get_training_set(),
             automater.get_testing_set(),
             batch_size=settings['batch_size'],
@@ -878,7 +878,7 @@ class UF3OptunaDeltaTrainer(UF3AbstractOptunaTrainer):
             f"curv2b_{curvature_2b}_curv3b_{curvature_3b}_w_{weight}"
         )
         unique_id = str(uuid.uuid4())[:32]
-        model_filename = f"model_{unique_id}"
+        model_filename = f"{unique_id}"
         potential_label = f'{unique_id}_{potential_label}'
         regularizer = {
             "ridge_1b": ridge_1b,

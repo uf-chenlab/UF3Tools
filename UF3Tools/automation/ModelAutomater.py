@@ -1076,10 +1076,10 @@ class ModelAutomater:
         trainer = ModelTrainer(self.model_data, self.chemical_system, self.bspline_config, regularizer)
         trainer.set_training_set(training_data)
         trainer.set_testing_set(testing_data)
-        model_to_train = trainer.configure_combined_model_for_fitting(
+        model_to_train, bspline = trainer.configure_combined_model_for_fitting(
            trained_models=trained_models,
         )
-        
+        self.bspline_config = bspline
         trainer.fit_from_dataframe(self.fitting_df, weight=weight, batch_size=batch_size, num_cores=num_cores,sample_weights=sample_weights_final if sample_weights is not None else None, exclude_elements=exclude_elements, outlier_config=None)
         print("Finalizing the combined potential...")
         trainer.finalize_combined_model(
