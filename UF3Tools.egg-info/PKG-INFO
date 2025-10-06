@@ -1,0 +1,9 @@
+Metadata-Version: 2.4
+Name: UF3Tools
+Version: 0.1
+Summary: A collection of tools for working with UF3
+Author: Nicholas Taormina
+Author-email: ntaormina@ufl.edu
+Dynamic: author
+Dynamic: author-email
+Dynamic: summary
