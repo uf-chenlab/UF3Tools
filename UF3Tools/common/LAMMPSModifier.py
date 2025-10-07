@@ -138,24 +138,23 @@ class BasisModifier:
                 f.write(f"{atom['type']}  {atom['x']:.6f}  {atom['y']:.6f}  {atom['z']:.6f}\n")
         print(f"Modified basis file written to '{output_file}'.")
         
+import os
+import numpy as np
+
 class WurtziteBuilder:
     """
     A class to build a perfect wurtzite crystal structure based on a basis file
     and write it to a LAMMPS data file.
-
-    This is a Python translation of the core crystal generation logic from the
-    provided FORTRAN code, ignoring the dislocation generation parts.
     """
     def __init__(self, basis_file):
         """
         Initializes the builder by reading and parsing the basis file.
-
         Args:
             basis_file (str): The path to the basis file.
         """
         if not os.path.exists(basis_file):
             raise FileNotFoundError(f"Error: The basis file '{basis_file}' was not found.")
-            
+        
         self.basis_file = basis_file
         self._read_basis()
         self.atoms = []
@@ -166,168 +165,127 @@ class WurtziteBuilder:
         """
         with open(self.basis_file, 'r') as f:
             lines = f.readlines()
-            
-            # Read title
-            self.title = lines[0].strip()
-            
-            # Read number of basis atoms
-            self.num_basis_atoms = int(lines[1].strip())
-            
-            # Read cell vectors (lattice parameters)
-            # FORTRAN stores in column-major, we'll use a 3x3 matrix
-            # cell(1) cell(2) cell(3) -> a_x, a_y, a_z
-            # cell(4) cell(5) cell(6) -> b_x, b_y, b_z
-            # cell(7) cell(8) cell(9) -> c_x, c_y, c_z
-            cell_flat = []
-            cell_flat.extend(map(float, lines[2].strip().split()))
-            cell_flat.extend(map(float, lines[3].strip().split()))
-            cell_flat.extend(map(float, lines[4].strip().split()))
-            self.cell = np.array(cell_flat).reshape(3, 3).T
+        
+        self.title = lines[0].strip()
+        self.num_basis_atoms = int(lines[1].strip())
+        
+        cell_flat = []
+        cell_flat.extend(map(float, lines[2].strip().split()))
+        cell_flat.extend(map(float, lines[3].strip().split()))
+        cell_flat.extend(map(float, lines[4].strip().split()))
+        self.cell = np.array(cell_flat).reshape(3, 3).T
 
-            # Read number of unit cells to generate in each direction
-            nx, ny, nz = map(int, lines[5].strip().split())
-            self.dims = (nx, ny, nz)
+        nx, ny, nz = map(int, lines[5].strip().split())
+        self.dims = (nx, ny, nz)
 
-            # Read basis atom names and fractional coordinates
-            self.basis_atoms = []
-            for i in range(self.num_basis_atoms):
-                parts = lines[6+i].strip().split()
-                self.basis_atoms.append({
-                    'name': parts[0],
-                    'x': float(parts[1]),
-                    'y': float(parts[2]),
-                    'z': float(parts[3])
-                })
+        self.basis_atoms = []
+        for i in range(self.num_basis_atoms):
+            parts = lines[6+i].strip().split()
+            self.basis_atoms.append({
+                'name': parts[0],
+                'x': float(parts[1]),
+                'y': float(parts[2]),
+                'z': float(parts[3])
+            })
 
     def build_crystal(self, supercell_dims=(1, 1, 1)):
-        """
-        Generates the atomic coordinates for the crystal by replicating
-        the unit cell. Can create supercells by specifying multipliers.
-
-        Args:
-            supercell_dims (tuple, optional): A tuple of 3 integers (mx, my, mz)
-                to multiply the base dimensions by. Defaults to (1, 1, 1), which
-                creates the base crystal defined in the basis file.
-        """
         self.atoms = []
         atom_id = 0
-        
-        # Get base dimensions from the basis file
+
         nx_base, ny_base, nz_base = self.dims
-        
-        # Calculate final dimensions based on supercell multipliers
         nx = nx_base * supercell_dims[0]
         ny = ny_base * supercell_dims[1]
         nz = nz_base * supercell_dims[2]
+        self._repeats = (nx, ny, nz)
 
-        print(f"Building a crystal with dimensions: {nx} x {ny} x {nz} unit cells.")
-
-        # This section replicates the nested DO loops from the FORTRAN code
         for k in range(nz):
             for j in range(ny):
                 for i in range(nx):
-                    for n_idx, basis_atom in enumerate(self.basis_atoms):
+                    for n_idx, b in enumerate(self.basis_atoms):
                         atom_id += 1
-                        
-                        # Get basis atom position vector
-                        base_pos = np.array([basis_atom['x'], basis_atom['y'], basis_atom['z']])
-                        
-                        # Get lattice translation vector
-                        translation = i * self.cell[:, 0] + j * self.cell[:, 1] + k * self.cell[:, 2]
+                        base = np.array([b['x'], b['y'], b['z']])
+                        t = i * self.cell[:, 0] + j * self.cell[:, 1] + k * self.cell[:, 2]
+                        pos = base + t
+                        atype = 1 if n_idx in [0, 1, 4, 5] else 2
+                        self.atoms.append({'id': atom_id, 'type': atype, 'x': pos[0], 'y': pos[1], 'z': pos[2]})
 
-                        # Calculate final atomic position
-                        pos = base_pos + translation
+        a = self.cell[:, 0] * nx
+        b = self.cell[:, 1] * ny
+        c = self.cell[:, 2] * nz
+        self._H = np.column_stack([a, b, c])
+        self._Hinv = np.linalg.inv(self._H)
 
-                        # Determine atom type based on the logic from the FORTRAN code
-                        # Atoms at basis indices 0, 1, 4, 5 (1, 2, 5, 6 in FORTRAN) are type 1
-                        # All others are type 2
-                        atom_type = 1 if n_idx in [0, 1, 4, 5] else 2
+    def _phase_shift_from_basis(self):
+        # use one unit cell’s basis to find the largest empty gap in fractional z
+        Hinv_uc = np.linalg.inv(self.cell)  # unit cell
+        fz = []
+        for b in self.basis_atoms:
+            s = Hinv_uc @ np.array([b['x'], b['y'], b['z']])
+            fz.append(s[2] - np.floor(s[2]))
+        fz.sort()
+        gaps = []
+        for i in range(len(fz)):
+            j = (i + 1) % len(fz)
+            z_i = fz[i]
+            z_j = fz[j] if j > i else fz[j] + 1.0
+            gaps.append((z_j - z_i, (z_i + z_j) * 0.5))
+        # pick the largest gap; center the boundary there
+        gaps.sort(reverse=True, key=lambda x: x[0])
+        _, mid = gaps[0]
+        delta = mid % 1.0
+        return delta
 
-                        self.atoms.append({
-                            'id': atom_id,
-                            'type': atom_type,
-                            'x': pos[0],
-                            'y': pos[1],
-                            'z': pos[2]
-                        })
-        print(f"Successfully built crystal with {len(self.atoms)} atoms.")
+    def _wrap_with_phase(self, eps=1e-9):
+        # shift all atoms by -δ along fractional z, then wrap to [0,1)
+        H = self._H
+        Hinv = self._Hinv
+        delta = self._phase_shift_from_basis()
 
-    def write_lammps_data(self, output_file, masses, padding=0.0):
-        """
-        Writes the generated atom data to a file in LAMMPS data format.
+        for p in self.atoms:
+            r = np.array([p['x'], p['y'], p['z']])
+            s = Hinv @ r
+            s[2] = s[2] - delta
+            s = s - np.floor(s)
+            # keep off exact faces
+            if s[2] < eps: s[2] = eps
+            if s[2] > 1.0 - eps: s[2] = 1.0 - eps
+            r_new = H @ s
+            p['x'], p['y'], p['z'] = r_new.tolist()
 
-        Args:
-            output_file (str): The path to the output data file.
-            masses (dict): A dictionary mapping atom type IDs (int) to their masses (float).
-            padding (float): Extra padding to add to the simulation box boundaries.
-                           Note: The original code had different hardcoded padding
-                           for each axis. This has been preserved.
-        """
-        if not hasattr(self, 'atoms') or not self.atoms:
-            print("Warning: No atoms have been generated. Call build_crystal() first.")
-            return
+    def write_lammps_data(self, output_file, masses, eps=1e-9):
+        if not getattr(self, 'atoms', None) or not hasattr(self, '_H'):
+            raise RuntimeError("call build_crystal() first.")
 
-        if not masses or not isinstance(masses, dict):
-            print("Error: A non-empty dictionary of masses must be provided.")
-            return
+        a_, b_, c_ = self._H[:, 0], self._H[:, 1], self._H[:, 2]
+        if abs(a_[1]) > 1e-8 or abs(a_[2]) > 1e-8 or abs(b_[2]) > 1e-8:
+            raise ValueError("rotate so a//x and b in xy-plane.")
 
-        # --- New logic to remove top and bottom layers ---
-        # First, find the initial min and max z-coordinates to identify the layers
-        initial_coords_z = np.array([atom['z'] for atom in self.atoms])
-        if initial_coords_z.size == 0:
-            print("Warning: Atom list is empty before processing.")
-            return
-            
-        initial_zlo, initial_zhi = initial_coords_z.min(), initial_coords_z.max()
+        # single wrap with phase shift so Ga–N planes don’t straddle the faces
+        self._wrap_with_phase(eps=eps)
 
-        # Filter the atoms, keeping only those not in the absolute top or bottom z-layer.
-        # This is crucial for non-periodic Z boundaries to remove incomplete unit cells.
-        filtered_atoms = [
-            atom for atom in self.atoms 
-            if not np.isclose(atom['z'], initial_zlo) and not np.isclose(atom['z'], initial_zhi)
-        ]
+        ax, ay, az = a_[0], a_[1], a_[2]
+        bx, by, bz = b_[0], b_[1], b_[2]
+        cx, cy, cz = c_[0], c_[1], c_[2]
 
-        if not filtered_atoms:
-            print("Warning: Filtering removed all atoms. The structure may only have two layers.")
-            return
-        # --- End of new logic ---
-
-        # Determine simulation box boundaries using the NEW, filtered list of atoms
-        coords_x = np.array([atom['x'] for atom in filtered_atoms])
-        xlo, xhi = coords_x.min(), coords_x.max()
-        coords_y = np.array([atom['y'] for atom in filtered_atoms])
-        ylo, yhi = coords_y.min(), coords_y.max()
-        coords_z = np.array([atom['z'] for atom in filtered_atoms])
-        zlo, zhi = coords_z.min(), coords_z.max()
-        
+        xlo, xhi = 0.0, ax
+        ylo, yhi = 0.0, by
+        zlo, zhi = 0.0, cz
+        xy, xz, yz = bx, cx, cy
 
         with open(output_file, 'w') as f:
-            # Header
             f.write(f"{self.title}\n\n")
-            f.write(f"{len(filtered_atoms):10d} atoms\n") # Use count of filtered atoms
-            f.write(f"{len(masses):10d} atom types\n\n") # Set atom types from masses dict
-
-            # Box dimensions (using original hardcoded padding on the new boundaries)
-            f.write(f"{xlo - 1:15.6f} {xhi + 1:15.6f} xlo xhi\n")
-            f.write(f"{ylo - 0.65:15.6f} {yhi + 0.65:15.6f} ylo yhi\n")
-            f.write(f"{zlo - 0.3:15.6f} {zhi + 0.3:15.6f} zlo zhi\n\n")
-
-            # Masses - written from the provided dictionary
+            f.write(f"{len(self.atoms):10d} atoms\n")
+            f.write(f"{len(masses):10d} atom types\n\n")
+            f.write(f"{xlo:15.10f} {xhi:15.10f} xlo xhi\n")
+            f.write(f"{ylo:15.10f} {yhi:15.10f} ylo yhi\n")
+            f.write(f"{zlo:15.10f} {zhi:15.10f} zlo zhi\n")
+            f.write(f"{xy:15.10f} {xz:15.10f} {yz:15.10f} xy xz yz\n\n")
             f.write("Masses\n\n")
-            # Sort by atom type for a consistently ordered file
-            for atom_type, mass_value in sorted(masses.items()):
-                f.write(f"{atom_type:10d} {mass_value:20.6f}\n")
-            f.write("\n")
-
-            # Atoms - written from the filtered list
-            f.write("Atoms\n\n")
-            # Re-number atom IDs to be sequential (1, 2, 3, ...) after filtering
-            for i, atom in enumerate(filtered_atoms, 1):
-                f.write(
-                    f"{i:10d} {atom['type']:3d} {atom['x']:20.6f} {atom['y']:20.6f} {atom['z']:20.6f}\n"
-                )
-    
-        print(f"LAMMPS data file written to '{output_file}'.")
+            for t, m in sorted(masses.items()):
+                f.write(f"{t:10d} {m:20.10f}\n")
+            f.write("\nAtoms # atomic\n\n")
+            for i, p in enumerate(self.atoms, 1):
+                f.write(f"{i:10d} {p['type']:3d} {p['x']:20.10f} {p['y']:20.10f} {p['z']:20.10f}\n")
 
 class LAMMPSModifier:
     def __init__(self, lammps_file, atom_style='atomic'):

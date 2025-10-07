@@ -148,14 +148,14 @@ def distributed_train_model_and_validate(train_model_fn, validate_model_fn, para
         return None
 
     chem_sys, trainer_model, bspline_config, model_filename, potential_label = train_result
-
-    validation_data, normalized_error = validate_model_fn(
+    
+    validation_data, normalized_error, visualization_files = validate_model_fn(
        settings, chem_sys, trainer_model, bspline_config, model_filename, potential_label, test_prediction, trial_id
     )
     print("Validation data returned:", validation_data)
     print("Normalized error:", normalized_error)
 
-    return validation_data, normalized_error
+    return validation_data, normalized_error, visualization_files
 
 class UF3AbstractOptunaTrainer():
     def __init__(self, base_directory, automater, settings, job_params, run_id):
@@ -427,6 +427,7 @@ class UF3AbstractOptunaTrainer():
         for pair in chemical_system.interactions_map[2]:
             analyzer.fix_repulsion_2b(pair=pair, r_target=1.0, min_curvature=50.0)
         normalized_error=0
+        visualization_files = analyzer.generate_potential_plots()
         result = None
         if test_prediction:
             if(settings['loss_weights']['error'] == 0):
@@ -495,7 +496,7 @@ class UF3AbstractOptunaTrainer():
         # Save validation data
         automater.store_validation_data_alternate_dir(model_filename, validation_data, os.getcwd())
         print("validation data stored")
-        return validation_data, normalized_error
+        return validation_data, normalized_error, visualization_files
     def train_model_and_validate( params, settings, trial_id=0, test_prediction=True, pure=False):
         worker = get_worker()
         automater = worker.plugins['uf3_automater']
@@ -648,10 +649,10 @@ class UF3OptunaTPETrainer(UF3AbstractOptunaTrainer):
         )
         result = future.result()
 
-        if isinstance(result, tuple) and len(result) == 2:
-            validation_data, normalized_error = result
+        if isinstance(result, tuple) and len(result) == 3:
+            validation_data, normalized_error, visualization_files = result
         else:
-            return None
+            return None # Handle failure
 
         if validation_data is None:
             return None
@@ -803,10 +804,11 @@ class UF3OptunaTPEFineTuningTrainer(UF3AbstractOptunaTrainer):
         )
         result = future.result()
 
-        if isinstance(result, tuple) and len(result) == 2:
-            validation_data, normalized_error = result
+        if isinstance(result, tuple) and len(result) == 3:
+            validation_data, normalized_error, visualization_files = result
         else:
-            return None
+            return None # Handle failure
+
 
         if validation_data is None:
             return None
@@ -930,14 +932,15 @@ class UF3OptunaDeltaTrainer(UF3AbstractOptunaTrainer):
             params,
             self.settings,
             trial_id=trial.number,
-            test_prediction=False,
+            test_prediction=True,
             pure=False,
         )
         result = future.result()
-        if isinstance(result, tuple) and len(result) == 2:
-            validation_data, normalized_error = result
+        if isinstance(result, tuple) and len(result) == 3:
+            validation_data, normalized_error, visualization_files = result
         else:
-            return None
+            return None # Handle failure
+
         if validation_data is None:
             return None
         potential_name, loss = self.parse_validation_data(

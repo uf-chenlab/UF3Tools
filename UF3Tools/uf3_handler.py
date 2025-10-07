@@ -1,6 +1,7 @@
 import glob
 import copy
 import os
+from io import BytesIO
 from itertools import combinations
 import pandas as pd
 from UF3Tools.simulations.managers.ValidationManager import ValidationManager, SingleCrystalValidationManager
@@ -1186,7 +1187,54 @@ class DataFilter:
         removed_count = initial_count - final_count
         print(f"Filter complete. Removed {removed_count} structures. "
             f"{final_count} structures remaining.")
-       
+    def filter_cutoff_distance(self, cutoff_distance):
+        """
+        Filters out structures where the maximum pairwise atomic distance is less than the specified cutoff.
+
+        This is important to ensure the simulation cell is large enough to contain all relevant
+        interactions for a potential with a given cutoff radius.
+
+        :param cutoff_distance: The minimum required maximum pair distance in Angstroms.
+                                Structures with a max distance below this value will be removed.
+        """
+        print(f"Filtering out structures with a max pair distance of less than {cutoff_distance} Å.")
+
+        if 'geometry' not in self.data.columns:
+            print("Error: 'geometry' column not found. Cannot perform distance filtering.")
+            return
+
+        initial_count = len(self.data)
+
+        def has_insufficient_max_distance(atoms):
+            """
+            Checks if the maximum interatomic distance is less than the cutoff.
+            Returns True if the structure should be removed.
+            """
+            try:
+                if len(atoms) < 2:
+                    return True  # No pairs exist, max distance is effectively zero.
+
+                # This correctly handles periodic boundary conditions.
+                distances = atoms.get_all_distances(mic=True)
+                
+                max_dist = distances.max()
+
+                return max_dist < cutoff_distance
+            except Exception as e:
+                # Remove structures that cause calculation errors.
+                print(f"Warning: Could not process a structure; it will be removed. Error: {e}")
+                return True
+
+        # Create a boolean mask for rows to remove.
+        to_remove_mask = self.data['geometry'].apply(has_insufficient_max_distance)
+        
+        self.data = self.data[~to_remove_mask]
+
+        final_count = len(self.data)
+        removed_count = initial_count - final_count
+
+        print(f"Filter complete. Removed {removed_count} structures. "
+              f"{final_count} structures remaining.")   
     def filter_isolated_pair_by_element(self, nn_cutoff=1.3, element='N'):
         """
         Removes structures that contain close element-element pairs (e.g. N-N) within nn_cutoff Å,
@@ -2174,6 +2222,7 @@ class ModelAnalyzer:
         self.r_cut = r_cut
         self.bins = bins
         self.bspline_config = bspline_config
+        self.visualization_files = {}
     def set_dft_validation_structures(self, dft_validation_structures):
         """
         Set the DFT validation structures.
@@ -2243,8 +2292,21 @@ class ModelAnalyzer:
         knot_sequence = self.bspline_config.knots_map[pair]
         fig, ax = plotting.visualize_splines(coefficients, knot_sequence)
         plt.vlines([0.0], -100, 100, color="orange", linewidth=2)
-        ax.set_ylim(-2.0, 0.4)
-        ax.set_xlim(0,6)
+        ax.set_ylim(-2.0, 0.5)
+        ax.tick_params(axis='both', which='major', labelsize=16)
+        ax.xaxis.label.set_size(16)
+        ax.yaxis.label.set_size(16)
+        ax.title.set_size(20)
+        ax.set_xlim(0, 6)
+
+        # Save the figure to an in-memory buffer
+        img_buffer = BytesIO()
+        fig.savefig(img_buffer, format='png', dpi=150)
+        img_buffer.seek(0)
+        
+        # Store the binary data
+        filename = f"2b_{'-'.join(pair)}.png"
+        self.visualization_files[filename] = img_buffer.read()
         plt.show()
         return solutions
     def analyze_3b(self, element_list, model):
@@ -2253,9 +2315,54 @@ class ModelAnalyzer:
         tbp = plotting3d.ThreeBodyPlotter(model, element_list)
         tbp.sample_uniformly(20)
         plot = tbp.plot_uniform(val_limit=0.25)
-        plot.show()
             
+            
+    def generate_potential_plots(self):
+        """
+        Generates only the 2-body and 3-body potential plots and returns them.
+        This is a lightweight alternative to the full analyze_model().
+        """
+        visualization_files = {}
         
+        # --- 2-Body Plotting Logic ---
+        solutions = least_squares.arrange_coefficients(self.model.coefficients, self.bspline_config)
+        for pair in self.chemical_system.interactions_map.get(2, []):
+            try:
+                coefficients = solutions[pair]
+                knot_sequence = self.bspline_config.knots_map[pair]
+                
+                fig, ax = plotting.visualize_splines(coefficients, knot_sequence)
+                ax.set_ylim(-2.0, 0.4)
+                ax.set_xlim(0, 6)
+                
+                img_buffer = BytesIO()
+                fig.savefig(img_buffer, format='png', dpi=150)
+                img_buffer.seek(0)
+                
+                filename = f"2b_{'-'.join(pair)}.png"
+                visualization_files[filename] = img_buffer.read()
+                plt.close(fig)
+            except Exception as e:
+                print(f"Could not generate 2-body plot for {pair}: {e}")
+
+        # --- 3-Body Plotting Logic ---
+        for trio in self.chemical_system.interactions_map.get(3, []):
+            try:
+                tbp = plotting3d.ThreeBodyPlotter(self.model, trio)
+                tbp.sample_uniformly(20)
+                plot = tbp.plot_uniform(val_limit=0.25)
+                
+                img_buffer = BytesIO()
+                plot.savefig(img_buffer, format='png', dpi=150)
+                img_buffer.seek(0)
+                
+                filename = f"3b_{'-'.join(trio)}.png"
+                visualization_files[filename] = img_buffer.read()
+                plot.close()
+            except Exception as e:
+                print(f"Could not generate 3-body plot for {trio}: {e}")
+                
+        return visualization_files
     def test_model_prediction(self, training=False, drop_columns=None, use_elements = None):
         """
         Test the model prediction.
@@ -2376,17 +2483,19 @@ class ModelAnalyzer:
         
         # Assuming `density_scatter` is a standalone function you have defined
         plotting.density_scatter(self.prediction_data["y_e"], self.prediction_data["p_e"], ax=ax[0], alpha=0.5)
-        ax[0].set_xlabel("DFT Energy (eV)")
-        ax[0].set_ylabel("Predicted Energy (eV)")
-        ax[0].set_title("Energy Parity Plot")
+        ax[0].set_xlabel("DFT Energy (eV)", fontsize=16)
+        ax[0].set_ylabel("Predicted Energy (eV)", fontsize=16)
+        ax[0].set_title("Energy Parity Plot", fontsize=18)
+        ax[0].tick_params(axis='both', which='major', labelsize=16)
         if(elim is not None):
             ax[0].set_xlim(elim[0], elim[1])
             ax[0].set_ylim(elim[0], elim[1])
 
         plotting.density_scatter(self.prediction_data["y_f"], self.prediction_data["p_f"], ax=ax[1], alpha=0.5)
-        ax[1].set_xlabel("DFT Force (eV/A)")
-        ax[1].set_ylabel("Predicted Force (eV/A)")
-        ax[1].set_title("Force Parity Plot")
+        ax[1].set_xlabel("DFT Force (eV/A)", fontsize=16)
+        ax[1].set_ylabel("Predicted Force (eV/A)", fontsize=16)
+        ax[1].set_title("Force Parity Plot", fontsize=18)
+        ax[1].tick_params(axis='both', which='major', labelsize=16)
         ax[1].set_xlim(-8, 8)
         ax[1].set_ylim(-8, 8)
         if (flim is not None):

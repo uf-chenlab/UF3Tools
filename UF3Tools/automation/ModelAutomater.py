@@ -75,6 +75,7 @@ class ModelAutomater:
             'invalid_gasp_runs': 'filter_invalid_gasp_runs',
             'duplicate_indices': 'filter_duplicate_indices',
             'unrelaxed_structures': 'filter_out_unrelaxed',
+            'cutoff_distance': 'filter_cutoff_distance',
             'none': 'get_data'
             # Add new filters here as needed
         }

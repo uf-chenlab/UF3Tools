@@ -4,6 +4,7 @@ from datetime import datetime
 import uuid
 import io
 import pickle
+import gridfs
 from collections.abc import Mapping 
 import math
 from UF3Tools.automation.ModelAutomater import *
@@ -313,7 +314,44 @@ class DataLogger:
             self.db[collection_name].replace_one({'_id': document['_id']}, document, upsert=True)
         except:
             return
+    def log_file(self, filename, file_data, run_id, content_type='application/octet-stream'):
+        """Logs a generic file (binary or text) to GridFS."""
+        if self.is_connected():
+            self._process_pending_uploads()
+            try:
+                if self.use_api:
+                    # This would require API endpoint changes; focusing on direct DB mode
+                    raise NotImplementedError("log_file via API is not yet implemented.")
+                else:
+                    return self._log_file_db(filename, file_data, run_id, content_type)
+            except Exception as e:
+                print(f"Connection available, but file upload failed for '{filename}': {e}. Saving locally.")
+                self._save_file_locally(filename, file_data, run_id)
+                return None
+        else:
+            print(f"Connection not available. Saving file '{filename}' locally.")
+            self._save_file_locally(filename, file_data, run_id)
+            return None
 
+    def _log_file_db(self, filename, file_data, run_id, content_type):
+        """Helper to log a generic file to GridFS."""
+        metadata = {"run_id": run_id, "content_type": content_type}
+        existing = self.fs.find_one({"filename": filename, "metadata.run_id": run_id})
+        if existing:
+            self.fs.delete(existing._id)
+        
+        file_id = self.fs.put(file_data, filename=filename, metadata=metadata)
+        print(f"Successfully wrote file '{filename}' to GridFS. File ID: {file_id}")
+        return file_id
+
+    def _save_file_locally(self, filename, file_data, run_id):
+        """Saves a generic file locally."""
+        run_dir = os.path.join(self.pending_uploads_dir, str(run_id))
+        os.makedirs(run_dir, exist_ok=True)
+        filepath = os.path.join(run_dir, filename)
+        with open(filepath, 'wb') as f:
+            f.write(file_data)
+        print(f"Saved file '{filename}' locally to '{filepath}'.")
     def _log_dataset_api(self, filename, dataset_obj, run_id):
         init_url = f"{self.api_url}/fs/{self.db_name}/initiate"
         response = requests.post(init_url, headers=self.json_headers)
@@ -505,7 +543,7 @@ class LoggingSession:
         }
         self.logger.log_document("datasets", dataset_doc, self.run_id)
         
-    def log_trial(self, potential_name, trial_number, params, loss, validation_data):
+    def log_trial(self, potential_name, trial_number, params, loss, validation_data,visualization_files={}):
         serialized_validation = self.serialize_validation_data(validation_data)
         trial_id = os.path.basename(potential_name)
         trial_doc = {
@@ -519,6 +557,15 @@ class LoggingSession:
             "status": "COMPLETED",
             "timestamp": datetime.now().isoformat()
         }
+        visualization_ids = {}
+        if visualization_files:
+            for filename, file_data in visualization_files.items():
+                file_id = self.logger.log_file(filename, file_data, self.run_id, content_type='image/png')
+                if file_id:
+                    visualization_ids[filename] = str(file_id)
+
+        trial_doc["visualization_ids"] = visualization_ids
+        
         self.logger.log_document("trials", trial_doc, self.run_id)
         
         #update the best values
