@@ -1923,6 +1923,107 @@ class ModelTrainer:
         self.model = model_to_train
         self.bspline_config = bspline
         return model_to_train, bspline
+    def configure_combined_model_from_elements(self, trained_models, elements):
+        model_to_train, bspline = self.model.configure_model_by_freezing_elements(
+            frozen_elements=elements,
+            potential_paths=trained_models,
+            combined_bspline_config=self.bspline_config
+        )
+        self.model = model_to_train
+        self.bspline_config = bspline
+        return model_to_train, bspline
+    def finalize_combined_model_from_elements(
+        self,
+        full_bspline_config: "BSplineBasis",
+        existing_model_paths: List[str],
+        frozen_elements: List[str] = None
+    ) -> "least_squares.WeightedLinearModel":
+        """
+        Combines the currently trained "delta" model with existing models to
+        create and store the final, complete potential.
+
+        It selectively assembles the final model:
+        - For interactions composed exclusively of elements in `frozen_elements`,
+        coefficients are sourced from `existing_model_paths`.
+        - For all other interactions, coefficients are sourced from the newly
+        trained model (`self.model`).
+
+        Args:
+            full_bspline_config: The BSpline configuration for the final, full model.
+            existing_model_paths: A list of paths to existing model files whose
+                                coefficients will be used for frozen terms.
+            frozen_elements: A list of element symbols (e.g., ['N']) that define
+                            which interaction terms are considered "frozen".
+        """
+        if not hasattr(self.model, 'coefficients') or self.model.coefficients is None:
+            raise RuntimeError("The current model has not been trained yet. Cannot finalize.")
+
+        print("\n--- Finalizing Combined Model ---")
+
+        existing_coeffs_map = {}
+        print("Pre-loading coefficients from existing models...")
+        for model_path in existing_model_paths:
+            try:
+                print(f"  - Loading from: {model_path}")
+                sub_model = least_squares.WeightedLinearModel.from_json(model_path)
+                sub_config = bspline.BSplineBasis.from_config(sub_model.as_dict())
+                sub_partitions, sub_offsets = sub_config.get_interaction_partitions()
+
+                for interaction, size in sub_partitions.items():
+                    if interaction not in existing_coeffs_map: # Avoid overwriting
+                        sub_start = sub_offsets[interaction]
+                        existing_coeffs_map[interaction] = sub_model.coefficients[sub_start : sub_start + size]
+            except Exception as e:
+                print(f"Warning: Could not process {model_path}. Skipping. Error: {e}")
+
+
+        frozen_set = set(frozen_elements) if frozen_elements else set()
+        delta_model = self.model
+        delta_partitions, delta_offsets = delta_model.bspline_config.get_interaction_partitions()
+        full_partitions, full_offsets = full_bspline_config.get_interaction_partitions()
+        final_coefficients = np.zeros(sum(full_partitions.values()))
+
+
+        print("\nAssembling final model from sources...")
+        if frozen_set:
+            print(f"Frozen elements specified: {', '.join(sorted(list(frozen_set)))}")
+        else:
+            print("No frozen elements specified. All terms will be taken from the newly trained model.")
+
+        for interaction, size in full_partitions.items():
+            dest_start = full_offsets[interaction]
+            dest_end = dest_start + size
+
+            is_frozen_term = frozen_set and set(interaction).issubset(frozen_set)
+
+            if is_frozen_term:
+                if interaction in existing_coeffs_map:
+                    print(f"  -> Using FROZEN coefficients for {interaction}")
+                    coeffs_vector = existing_coeffs_map[interaction]
+                    if len(coeffs_vector) == size:
+                        final_coefficients[dest_start:dest_end] = coeffs_vector
+                    else:
+                        print(f"    - WARNING: Size mismatch for frozen term {interaction}. Expected {size}, got {len(coeffs_vector)}. Skipping.")
+                else:
+                    print(f"    - WARNING: Frozen term {interaction} not found in existing models. Coefficients will be zero.")
+            else:
+                if interaction in delta_offsets:
+                    print(f"  -> Using NEWLY TRAINED coefficients for {interaction}")
+                    delta_start = delta_offsets[interaction]
+                    final_coefficients[dest_start:dest_end] = delta_model.coefficients[delta_start : delta_start + size]
+                else:
+                    print(f"  -> Term {interaction} not found in delta model. Coefficients will be zero.")
+
+
+        final_model = least_squares.WeightedLinearModel(full_bspline_config)
+        final_model.coefficients = final_coefficients
+
+        self.model = final_model
+        self.bspline_config = full_bspline_config
+        self.chemical_system = full_bspline_config.chemical_system
+
+        print("\n--- Assembly Complete: ModelTrainer now holds the final model. ---")
+        return self.model
     def finalize_combined_model(self, 
                                 full_bspline_config: BSplineBasis, 
                                 existing_model_paths: List[str]):
@@ -1934,7 +2035,6 @@ class ModelTrainer:
             raise RuntimeError("The current model has not been trained yet. Cannot finalize.")
 
         delta_model = self.model
-        print(delta_model.as_dict()['coefficients'][('N', 'N', 'N')])
         full_partitions, full_offsets = full_bspline_config.get_interaction_partitions()
         final_coefficients = np.zeros(sum(full_partitions.values()))
         
@@ -2852,7 +2952,7 @@ class UF3LammpsPotentialGenerator:
             'curvature_3b': r'_curv3b_([-+e0-9.]+)'
         }
         
-        print("updated bspline config: ", self.bspline_config)
+        #print("updated bspline config: ", self.bspline_config)
         regularizer_values = {}
         for key, pattern in reg_fields.items():
             match = re.search(pattern, potential_version)
@@ -2861,14 +2961,14 @@ class UF3LammpsPotentialGenerator:
             regularizer_values[key] = float(match.group(1))
 
         config = {
-        "r_max_map": self.bspline_config.r_max_map.copy(),
-        "knots_map": self.bspline_config.knots_map.copy(),
-        "leading_trim": self.bspline_config.leading_trim.copy(),
-        "trailing_trim": self.bspline_config.trailing_trim.copy(),
-        #"regularizer": self.bspline_config.get_regularization_matrix(**regularizer_values),
-        "data_coverage": None
-    }
-        print("config bspline: ", self.bspline_config)
+            "r_max_map": self.bspline_config.r_max_map.copy(),
+            "knots_map": self.bspline_config.knots_map.copy(),
+            "leading_trim": self.bspline_config.leading_trim.copy(),
+            "trailing_trim": self.bspline_config.trailing_trim.copy(),
+            #"regularizer": self.bspline_config.get_regularization_matrix(**regularizer_values),
+            "data_coverage": None
+        }
+       # print("config bspline: ", self.bspline_config)
         coeffs = []
         i = 0
         self.expected_shapes = {}
@@ -2877,22 +2977,22 @@ class UF3LammpsPotentialGenerator:
             if not line or line.startswith("#"):
                 i += 1
                 continue
-            print(line)
+            #print(line)
             tokens = line.split()
             if tokens[0] == "2B":
                 key = tuple(tokens[1:3])
                 config["leading_trim"][2] = int(tokens[3])
                 config["trailing_trim"][2] = int(tokens[4])
                 i += 1
-                print(lines[i])
+               # print(lines[i])
                 rmax, _ = map(float, lines[i].strip().split())
                 config["r_max_map"][key] = rmax
                 i += 1
-                print(lines[i])
+               # print(lines[i])
                 knots = list(map(float, lines[i].strip().split()))
                 config["knots_map"][key] = np.array(knots)
                 i += 1
-                print(lines[i])
+                #print(lines[i])
                 nbasis = int(lines[i].strip())
                 i += 1
                 coeff_line = lines[i].strip().split()
@@ -2901,19 +3001,19 @@ class UF3LammpsPotentialGenerator:
                     raise ValueError(f"2B: expected {nbasis} coeffs, got {len(coeff_line)} at line {i}")
                 coeffs.extend(map(float, coeff_line))
                 i += 2
-                print(lines[i])
+                #print(lines[i])
 
             elif tokens[0] == "3B":
-                print(lines[i])
+                #print(lines[i])
                 key = tuple(tokens[1:4])
                 config["leading_trim"][3] = int(tokens[4])
                 config["trailing_trim"][3] = int(tokens[5])
                 i += 1
-                print(lines[i])
+                #print(lines[i])
                 rvals = list(map(float, lines[i].strip().split()))
                 config["r_max_map"][key] = [ rvals[0], rvals[1], rvals[2]]
                 i += 1
-                print(lines[i])
+                #print(lines[i])
                 k2 = list(map(float, lines[i].strip().split())); i += 1
                 k1 = list(map(float, lines[i].strip().split())); i += 1
                 k0 = list(map(float, lines[i].strip().split())); i += 1
@@ -2921,28 +3021,28 @@ class UF3LammpsPotentialGenerator:
                 if len(k2) > len(k0):
                     k2, k1, k0 = k0, k1, k2
                 config["knots_map"][key] = [ np.array(k2), np.array(k1), np.array(k0)]
-                print(lines[i])
+                #print(lines[i])
                 shape = tuple(map(int, lines[i].strip().split()))
                 i += 1
 
                 expected_rows = shape[0] * shape[1]
                 expected_cols = shape[2]
                 self.expected_shapes[key] = shape
-                print(key)
-                print(f"3B shape: {shape}, expected_rows: {expected_rows}, expected_cols: {expected_cols}")
+                #print(key)
+                #print(f"3B shape: {shape}, expected_rows: {expected_rows}, expected_cols: {expected_cols}")
                 
                 for row_idx in range(expected_rows):
                     row = list(map(float, lines[i].strip().split()))
                     if len(row) != expected_cols:
                         raise ValueError(f"3B: line {i} has {len(row)} coeffs, expected {expected_cols}")
                     coeffs.extend(row)
-                    print(f"3B coeffs row {row_idx}: {row}")
+                    #print(f"3B coeffs row {row_idx}: {row}")
                     i += 1
 
                 i += 1  # skip "#"
             else:
                 i += 1
-        print("coeffs shape: ", len(coeffs))
+        #print("coeffs shape: ", len(coeffs))
         config["solution"] = {
             "coefficients": np.array(coeffs)
         }
@@ -2968,15 +3068,15 @@ class UF3LammpsPotentialGenerator:
         #         unsym_knots_map[k] = v.copy()
         # config["knots_map"] = unsym_knots_map
         partitions = self.bspline_config.get_interaction_partitions()
-        print(partitions)
-        print("partitions 0: ", partitions[0])
+        #print(partitions)
+        #print("partitions 0: ", partitions[0])
         expected_total = sum(partitions[0].values())
         coeff_map = {}
         coef_array = np.array(coeffs)
         for trio in self.bspline_config.interactions_map.get(3, []):
             
             test = self.bspline_config.compress_3B(coef_array, trio)
-            print(f"3B test for {trio}: {len(test)}")
+            #print(f"3B test for {trio}: {len(test)}")
         component_sizes, component_offsets = self.bspline_config.get_interaction_partitions(uncompressed=True)
         #prepend coef_array with two ones
         for key,count in partitions[0].items():
@@ -2985,8 +3085,8 @@ class UF3LammpsPotentialGenerator:
         
 
         arranged = least_squares.arrange_coefficients(coef_array, self.bspline_config)
-        for trio in self.bspline_config.interactions_map.get(3, []):
-            print(f'len pre-compress: {len(arranged[trio])} ')
+        #for trio in self.bspline_config.interactions_map.get(3, []):
+            #print(f'len pre-compress: {len(arranged[trio])} ')
             # arranged[trio] = self.bspline_config.compress_3B(arranged[trio], trio)
             # print(f"3B test 2 for {trio}: {len(arranged[trio])}")
         start_index = 0
@@ -3008,9 +3108,9 @@ class UF3LammpsPotentialGenerator:
                 reshaped = coeff_block.reshape(shape)
                 coeff_map["-".join(key)] = [reshaped[i].tolist() for i in range(shape[0])]
         component_sizes, component_offsets = self.bspline_config.get_interaction_partitions(uncompressed=False)
-        print(encode_interaction_map(config["knots_map"]))
-        print(encode_interaction_map(coeff_map))
-        print(len(encode_interaction_map(coeff_map)))
+        #print(encode_interaction_map(config["knots_map"]))
+        #print(encode_interaction_map(coeff_map))
+        #print(len(encode_interaction_map(coeff_map)))
         model_json = {
             "chemical_system": self.chemical_system.as_dict(),
             "element_list": self.chemical_system.element_list,
@@ -3042,19 +3142,19 @@ class UF3LammpsPotentialGenerator:
         interaction_sum = 0
         for interaction in self.bspline_config.get_interaction_partitions()[0]:
             interaction_sum += self.bspline_config.get_interaction_partitions()[0][interaction]
-        print("interaction sum: ", interaction_sum)
+        #print("interaction sum: ", interaction_sum)
         if interaction_sum > len(self.model.coefficients):
             for trio in self.bspline_config.interactions_map.get(3, []):
                 r_min = self.bspline_config.r_min_map[trio]
                 r_max = self.bspline_config.r_max_map[trio]
                 res = self.bspline_config.resolution_map[trio]
                 self.bspline_config.symmetry[trio] = bspline.find_symmetry_3B(trio, r_min, r_max, res)
-                print(f'Symmetry for {trio} set to {self.bspline_config.symmetry[trio]}')
+                #print(f'Symmetry for {trio} set to {self.bspline_config.symmetry[trio]}')
         self.bspline_config.update_basis_functions()
         interaction_sum = 0
         for interaction in self.bspline_config.get_interaction_partitions()[0]:
             interaction_sum += self.bspline_config.get_interaction_partitions()[0][interaction]
-        print("interaction sum: ", interaction_sum)
+        #print("interaction sum: ", interaction_sum)
         if interaction_sum != len(self.model.coefficients):
             raise ValueError(f"Interaction sum {interaction_sum} does not match model coefficients length {len(self.model.coefficients)}")
 
@@ -3112,8 +3212,8 @@ class UF3LammpsPotentialGenerator:
                 files[key] += " ".join(['{:.17g}'.format(v) for v in knots2]) + "\n"
                 files[key] += " ".join(['{:.17g}'.format(v) for v in knots1]) + "\n"
                 files[key] += " ".join(['{:.17g}'.format(v) for v in knots0]) + "\n"
-                print("coefficient len: ", len(self.model.coefficients))
-                print("bspline interaction partitions: ", self.bspline_config.get_interaction_partitions())
+                #print("coefficient len: ", len(self.model.coefficients))
+                #print("bspline interaction partitions: ", self.bspline_config.get_interaction_partitions())
                 arranged = least_squares.arrange_coefficients(self.model.coefficients, self.bspline_config)
                 decompressed = self.bspline_config.decompress_3B(arranged[interaction], interaction)
                 files[key] += f"{decompressed.shape[0]} {decompressed.shape[1]} {decompressed.shape[2]}\n"

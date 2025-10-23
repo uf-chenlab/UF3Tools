@@ -117,10 +117,10 @@ class DefectEnergyValidation(PotentialValidation):
                 if dft_defect_energy is not None and lammps_defect_energy is not None:
                     abs_delta_dft = dft_defect_energy - dft_perfect
                     abs_delta_lammps = lammps_defect_energy - lammps_perfect
-                    percent_delta_dft = (abs_delta_dft / abs(dft_perfect)) * 100 if dft_perfect != 0 else None
-                    percent_delta_lammps = (abs_delta_lammps / abs(lammps_perfect)) * 100 if lammps_perfect != 0 else None
-                    abs_error = abs(abs_delta_dft - abs_delta_lammps)/abs(abs_delta_dft) * 100 if abs_delta_dft != 0 else None
-                    percent_error = abs(percent_delta_dft - percent_delta_lammps)/abs(percent_delta_dft) * 100 if percent_delta_dft is not None and percent_delta_lammps is not None and percent_delta_dft != 0 else None
+                    percent_delta_dft = (abs_delta_dft / (dft_perfect)) * 100 if dft_perfect != 0 else None
+                    percent_delta_lammps = (abs_delta_lammps / (lammps_perfect)) * 100 if lammps_perfect != 0 else None
+                    abs_error = (abs_delta_dft - abs_delta_lammps)/(abs_delta_dft) * 100 if abs_delta_dft != 0 else None
+                    percent_error = (percent_delta_dft - percent_delta_lammps)/(percent_delta_dft) * 100 if percent_delta_dft is not None and percent_delta_lammps is not None and percent_delta_dft != 0 else None
                     output_dict[defect_type] = {
                         'abs_error': abs_error,
                         'percent_error': percent_error,

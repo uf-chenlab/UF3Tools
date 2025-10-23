@@ -18,7 +18,7 @@ class CohesiveEnergySimulation(CompoundSimulation):
             'z_boundary': 'p',
             'change_box': '',
             'uf3_degree': '3',
-            'box_relax_settings': 'fix 1 all box/relax aniso 0.0 vmax 0.001',
+            'box_relax_settings': 'fix 1 all box/relax aniso 0.0',
             'min_style': 'fire',
             'etol': '1e-25',
             'ftol': '1e-25',

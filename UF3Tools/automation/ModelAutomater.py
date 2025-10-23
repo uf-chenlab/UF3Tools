@@ -1072,6 +1072,40 @@ class ModelAutomater:
         trainer.fit_from_dataframe_min(self.fitting_df, weight=weight, batch_size=batch_size, num_cores=num_cores,sample_weights=sample_weights_final if sample_weights is not None else None, min_distances=min_distances)
         trainer.export_model(model_filename)
         return self.chemical_system, trainer.get_model(), trainer.get_bspline_config(), None, model_filename, trainer
+    def train_terms_with_frozen_elements(
+        self, 
+        trained_models,
+        elements_to_freeze: List[str], 
+        model_filename: str, 
+        training_data, 
+        testing_data, 
+        regularizer, 
+        full_bspline_config, 
+        weight=0.3, 
+        batch_size=500, 
+        num_cores=1, 
+        sample_weights=None, 
+        exclude_elements=None
+    ):
+        sample_weights_final = self.fill_sample_weights(sample_weights)
+        trainer = ModelTrainer(self.model_data, self.chemical_system, self.bspline_config, regularizer)
+        trainer.set_training_set(training_data)
+        trainer.set_testing_set(testing_data)
+        model_to_train, bspline = trainer.configure_combined_model_from_elements(
+            trained_models=trained_models,
+            elements=elements_to_freeze,
+           
+        )
+        self.bspline_config = bspline
+        trainer.fit_from_dataframe(self.fitting_df, weight=weight, batch_size=batch_size, num_cores=num_cores,sample_weights=sample_weights_final if sample_weights is not None else None, exclude_elements=exclude_elements, outlier_config=None)
+        print("Finalizing the combined potential...")
+        trainer.finalize_combined_model_from_elements(
+            full_bspline_config=full_bspline_config,
+            frozen_elements=elements_to_freeze,
+            existing_model_paths=trained_models
+        )
+        trainer.export_model(model_filename)
+        return self.chemical_system, trainer.get_model(), trainer.get_bspline_config(), None, model_filename, trainer
     def train_terms_from_df(self, trained_models, model_filename, training_data, testing_data, regularizer, full_bspline_config, weight=0.3, batch_size=500, num_cores=1, sample_weights=None, exclude_elements=None):
         sample_weights_final = self.fill_sample_weights(sample_weights)
         trainer = ModelTrainer(self.model_data, self.chemical_system, self.bspline_config, regularizer)

@@ -120,7 +120,7 @@ class PotentialValidation:
             return None
         if lammps_data is None:
             return None
-        return abs(abs(lammps_data - dft_data) / dft_data * 100)
+        return ((lammps_data - dft_data) / dft_data * 100)
 
 class ValidationData:
     def __init__(self, potential_version, potential_file, structure):
@@ -242,12 +242,12 @@ class ValidationData:
             file.write(str(self))
 
     def save_raw_data_to_file(self, directory):
-        base_filename = base_filename = self.potential_version.split("_")[0]
-        #trim the filename so it doenst have all of the parameters
-        
-        # Save LAMMPS data
+        base_filename = self.potential_version.split("_")[0]
         lammps_path = os.path.join(directory, f"{base_filename}_lammps_raw_data.txt")
-        with open(lammps_path, "w") as file:
+        dft_path = os.path.join(directory, f"{base_filename}_dft_raw_data.txt")
+
+        with open(lammps_path, "a") as file:
+            file.write("\n")
             file.write(f"Potential version: {self.potential_version}\n")
             file.write(f"Structure: {self.structure}\n\n")
             file.write("Raw LAMMPS Data:\n")
@@ -264,10 +264,10 @@ class ValidationData:
                 elif isinstance(data_list, dict):
                     for k, v in data_list.items():
                         file.write(f"    {k}: {v}\n")
+            file.write("\n")
 
-        # Save DFT data
-        dft_path = os.path.join(directory, f"{base_filename}_dft_raw_data.txt")
-        with open(dft_path, "w") as file:
+        with open(dft_path, "a") as file:
+            file.write("\n")
             file.write(f"Potential version: {self.potential_version}\n")
             file.write(f"Structure: {self.structure}\n\n")
             file.write("Raw DFT Data:\n")
@@ -284,6 +284,7 @@ class ValidationData:
                 elif isinstance(data_list, dict):
                     for k, v in data_list.items():
                         file.write(f"    {k}: {v}\n")
+            file.write("\n")
         
 class ValidationDataCompare:
     def __init__(self, validation_1, validation_2):

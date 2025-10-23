@@ -835,13 +835,15 @@ class UF3OptunaTPEFineTuningTrainer(UF3AbstractOptunaTrainer):
         return loss
     
 class UF3OptunaDeltaTrainer(UF3AbstractOptunaTrainer):
-    def __init__(self, base_directory, automater, settings, job_params, existing_models, full_bspline_config):
+    def __init__(self, base_directory, automater, settings, job_params, existing_models, full_bspline_config, elements=None):
         run_id = str(uuid.uuid4())[:32]
         run_id_str = f"optuna_delta_{run_id}"
         print("delta automater bspline: ", automater.get_bspline_config())
         super().__init__(base_directory, automater, settings, job_params, run_id_str)
         self.existing_models = existing_models
         self.full_bspline_config = full_bspline_config
+        self.elements = elements if elements is not None else automater.get_chemical_system().element_list
+        settings['frozen_elements'] = self.elements
 
     def run(self, temp_search=False):
         self.init_workers()
@@ -890,22 +892,42 @@ class UF3OptunaDeltaTrainer(UF3AbstractOptunaTrainer):
             "curvature_3b": curvature_3b
         }
         try:
-            _, _, _, _, _, trainer = automater.train_terms_from_df(
-                trained_models=settings['existing_models'],
-                model_filename=model_filename,
-                training_data=automater.get_training_set(),
-                testing_data=automater.get_testing_set(),
-                regularizer=regularizer,
-                full_bspline_config=settings['full_bspline_config'],
-                weight=weight,
-                batch_size=settings['batch_size'],
-                num_cores=settings['cores_per_job'],
-                sample_weights=settings['sample_weights'],
-                exclude_elements=settings.get('excluded_testing_elements')
-            )
-            final_model = trainer.get_model()
-            final_bspline_config = trainer.get_bspline_config()
-            final_chemical_system = final_bspline_config.chemical_system
+            if(settings.get('frozen_elements', None) is None):
+                _, _, _, _, _, trainer = automater.train_terms_from_df(
+                    trained_models=settings['existing_models'],
+                    model_filename=model_filename,
+                    training_data=automater.get_training_set(),
+                    testing_data=automater.get_testing_set(),
+                    regularizer=regularizer,
+                    full_bspline_config=settings['full_bspline_config'],
+                    weight=weight,
+                    batch_size=settings['batch_size'],
+                    num_cores=settings['cores_per_job'],
+                    sample_weights=settings['sample_weights'],
+                    exclude_elements=settings.get('excluded_testing_elements')
+                )
+                final_model = trainer.get_model()
+                final_bspline_config = trainer.get_bspline_config()
+                final_chemical_system = final_bspline_config.chemical_system
+            else:
+                _, _, _, _, _, trainer = automater.train_terms_with_frozen_elements(
+                    trained_models=settings['existing_models'],
+                    elements_to_freeze=settings['frozen_elements'],
+                    model_filename=model_filename,
+                    training_data=automater.get_training_set(),
+                    testing_data=automater.get_testing_set(),
+                    regularizer=regularizer,
+                    full_bspline_config=settings['full_bspline_config'],
+                    weight=weight,
+                    batch_size=settings['batch_size'],
+                    num_cores=settings['cores_per_job'],
+                    sample_weights=settings['sample_weights'],
+                    exclude_elements=settings.get('excluded_testing_elements'),
+                    frozen_elements=settings['frozen_elements']
+                )
+                final_model = trainer.get_model()
+                final_bspline_config = trainer.get_bspline_config()
+                final_chemical_system = final_bspline_config.chemical_system
 
             return final_chemical_system, final_model, final_bspline_config, model_filename, potential_label
 
