@@ -70,7 +70,7 @@ class EnergyPerAtomValidation(PotentialValidation):
 
                 lammps_cohesive_energy = self.lammps_results["cohesive_energy"]
                 percent_error = {}
-                percent_error["energy_per_atom"] = abs(
+                percent_error["energy_per_atom"] = (
                     (lammps_cohesive_energy - self.dft_data["energy_per_atom"])
                     / self.dft_data["energy_per_atom"]
                 ) * 100

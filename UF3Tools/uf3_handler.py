@@ -1,5 +1,8 @@
 import glob
+import copy
 import os
+from io import BytesIO
+from itertools import combinations
 import pandas as pd
 from UF3Tools.simulations.managers.ValidationManager import ValidationManager, SingleCrystalValidationManager
 from sklearn.cluster import MiniBatchKMeans
@@ -9,10 +12,13 @@ import numpy as np
 import matplotlib.pyplot as plt
 from uf3.util.json_io import *
 from uf3.data import io
+from ase.neighborlist import neighbor_list
 from uf3.data import geometry
 from uf3.data import composition
 from uf3.representation import bspline
+from uf3.regression.least_squares import WeightedLinearModel
 from uf3.representation import process
+from uf3.representation.process import *
 from uf3.regression import least_squares
 from uf3.forcefield import calculator
 from scipy.linalg import svd
@@ -490,7 +496,7 @@ class DataSetAnalyzer:
         plt.show()
         
 
-    def plot_force_histogram(self, bins=20, alpha=0.5, bin_range=[-10, 10]):
+    def plot_force_histogram(self, bins=20, alpha=0.5, bin_range=[-10, 10], ylim=None):
         """
         Plot histograms for the forces fx, fy, and fz with an optional bin range.
         
@@ -513,6 +519,8 @@ class DataSetAnalyzer:
             plt.xlabel(f'Force {column.upper()}')
             plt.ylabel('Frequency')
             plt.title(f'Force {column.upper()} Histogram')
+            if ylim is not None:
+                plt.ylim(ylim)
             plt.show()
 
         # Plot histograms for fx, fy, and fz with the specified bin range
@@ -902,6 +910,13 @@ class DataFilter:
         """
         print(f"Filtering out data points with indices: {indices}")
         self.data = self.data[~self.data.index.isin(indices)]
+    def filter_out_unrelaxed(self):
+        """Filters out all datapoints from the relaxation trajectories, except the last run
+        """ 
+        all_indices = self.data.index.tolist()
+        relaxed_indices = [i for i in all_indices if re.search(r'OUTCAR_\d+$', i)]
+        print(f"Keeping only relaxed structure indices: {len(relaxed_indices)}")
+        self.data = self.data[self.data.index.isin(relaxed_indices)]       
 
     def export_to_pickle(self, filename):
         """
@@ -1095,60 +1110,141 @@ class DataFilter:
         print(f"Filtered data length after CUR subsampling: {len(self.data)}")
     def filter_min_pair_distance(self, threshold):
         print(f"Filtering structures with any pair distance below {threshold} Å")
-        
-        def has_close_pair(atoms):
+
+        def get_distances_and_violations(atoms):
             try:
-                # this gets full distance matrix using PBC
                 dists = atoms.get_all_distances(mic=True)
-                np.fill_diagonal(dists, np.inf)  # ignore self-pairs
-                return np.any(dists < threshold)
+                np.fill_diagonal(dists, np.inf)
+                upper_tri = np.triu_indices_from(dists, k=1)
+                flat_dists = dists[upper_tri]
+                violations = [(i, j, dists[i, j]) for i, j in zip(*upper_tri) if dists[i, j] < threshold]
+                has_close = len(violations) > 0
+                return pd.Series([flat_dists.tolist(), violations, has_close])
             except Exception as e:
                 print(f"Error checking distances: {e}")
-                return True  # default to removing if error occurs
-        
-        self.data = self.data[~self.data['geometry'].apply(has_close_pair)]
-    def filter_min_pair_distance_by_element(self, nn_cutoff=1.3, element='N'):
+                return pd.Series([[], [], True])
+
+        self.data[['all_distances', 'violating_pairs', 'has_close_pair']] = self.data['geometry'].apply(get_distances_and_violations)
+
+        filtered_indices = self.data.index[self.data['has_close_pair']].tolist()
+        print(f"Filtered out indices: {filtered_indices}")
+        removed_data = self.data[self.data['has_close_pair']]
+        print(f"Removed {len(removed_data)} structures with close pairs.")
+        self.data = self.data[~self.data['has_close_pair']]
+        self.data.drop(columns=['has_close_pair'], inplace=True)
+
+        # export only the data that was filtered
+        removed_data.to_excel('filtered_data.xlsx', index=True)
+
+
+    def filter_min_pair_distance_by_element(self, nn_cutoff: float = 2.5, element: str = 'N'):
         """
-        Removes structures that contain close element–element pairs (e.g. N–N) within nn_cutoff Å,
-        ONLY if both atoms are not near any atoms of a different type.
+        Removes structures from self.data that contain pairs of a specific element
+        closer than a given cutoff distance, using a robust neighbor list method.
 
         Parameters:
-            nn_cutoff (float): Distance threshold for same-element pairs (e.g., N–N).
-            element (str): Element to check for same-element short pairs.
+            nn_cutoff (float): The minimum allowed distance in Ångströms (Å)
+                            between two atoms of the specified element.
+            element (str): The chemical symbol of the element to check (e.g., 'N').
         """
-        print(f"Filtering structures with isolated {element}–{element} pairs under {nn_cutoff} Å.")
+        initial_count = len(self.data)
+        print(f"Filtering structures with {element}–{element} pairs closer than {nn_cutoff} Å...")
 
-        def has_isolated_short_pair(atoms):
+        def has_short_pair_fixed(atoms) -> bool:
+            """
+            Checks a single atomic structure for short element-element pairs
+            using a periodic-boundary-aware neighbor list.
+            """
             try:
-                symbols = atoms.get_chemical_symbols()
-                n_indices = [i for i, sym in enumerate(symbols) if sym == element]
-                other_indices = [i for i, sym in enumerate(symbols) if sym != element]
-
-                if len(n_indices) < 2:
+                # 1. Create a set of indices for the target element for fast lookups.
+                target_indices = {atom.index for atom in atoms if atom.symbol == element}
+                if len(target_indices) < 2:
                     return False
 
-                for i, idx1 in enumerate(n_indices):
-                    for idx2 in n_indices[i+1:]:
-                        dist = atoms.get_distance(idx1, idx2, mic=True)
-                        if dist < nn_cutoff:
-                            return True  # Both are isolated and close together — likely gas
+                # 2. Build a neighbor list containing all pairs of atoms (any element)
+                # that are closer than the cutoff distance. This correctly handles PBC.
+                # 'ij' returns two arrays: one for the 'i' index, one for the 'j'.
+                idx_i, idx_j = neighbor_list('ij', atoms, nn_cutoff)
+
+                # 3. Iterate through the found pairs and check if both atoms in a pair
+                # are of the target element.
+                for i, j in zip(idx_i, idx_j):
+                    if i in target_indices and j in target_indices:
+                        return True # Found a short pair of the target element.
+
+                # 4. If the loop completes, no short pairs were found.
                 return False
             except Exception as e:
-                print(f"Error in N–N filter: {e}")
+                print(f"Skipping a structure due to an error in neighbor list calculation: {e}")
+                # Return True to remove potentially problematic structures.
                 return True
 
-        self.data = self.data[~self.data['geometry'].apply(has_isolated_short_pair)]
-        print("Filtered structures with isolated short same-element pairs.")
+        # Apply the check and filter the data
+        to_remove_mask = self.data['geometry'].apply(has_short_pair_fixed)
+        self.data = self.data[~to_remove_mask]
+        
+        final_count = len(self.data)
+        removed_count = initial_count - final_count
+        print(f"Filter complete. Removed {removed_count} structures. "
+            f"{final_count} structures remaining.")
+    def filter_cutoff_distance(self, cutoff_distance):
+        """
+        Filters out structures where the maximum pairwise atomic distance is less than the specified cutoff.
+
+        This is important to ensure the simulation cell is large enough to contain all relevant
+        interactions for a potential with a given cutoff radius.
+
+        :param cutoff_distance: The minimum required maximum pair distance in Angstroms.
+                                Structures with a max distance below this value will be removed.
+        """
+        print(f"Filtering out structures with a max pair distance of less than {cutoff_distance} Å.")
+
+        if 'geometry' not in self.data.columns:
+            print("Error: 'geometry' column not found. Cannot perform distance filtering.")
+            return
+
+        initial_count = len(self.data)
+
+        def has_insufficient_max_distance(atoms):
+            """
+            Checks if the maximum interatomic distance is less than the cutoff.
+            Returns True if the structure should be removed.
+            """
+            try:
+                if len(atoms) < 2:
+                    return True  # No pairs exist, max distance is effectively zero.
+
+                # This correctly handles periodic boundary conditions.
+                distances = atoms.get_all_distances(mic=True)
+                
+                max_dist = distances.max()
+
+                return max_dist < cutoff_distance
+            except Exception as e:
+                # Remove structures that cause calculation errors.
+                print(f"Warning: Could not process a structure; it will be removed. Error: {e}")
+                return True
+
+        # Create a boolean mask for rows to remove.
+        to_remove_mask = self.data['geometry'].apply(has_insufficient_max_distance)
+        
+        self.data = self.data[~to_remove_mask]
+
+        final_count = len(self.data)
+        removed_count = initial_count - final_count
+
+        print(f"Filter complete. Removed {removed_count} structures. "
+              f"{final_count} structures remaining.")   
     def filter_isolated_pair_by_element(self, nn_cutoff=1.3, element='N'):
         """
-        Removes structures that contain close element–element pairs (e.g. N–N) within nn_cutoff Å,
+        Removes structures that contain close element-element pairs (e.g. N-N) within nn_cutoff Å,
         ONLY if both atoms are not near any atoms of a different type.
 
         Parameters:
-            nn_cutoff (float): Distance threshold for same-element pairs (e.g., N–N).
+            nn_cutoff (float): Distance threshold for same-element pairs (e.g., N-N).
             element (str): Element to check for same-element short pairs.
         """
-        print(f"Filtering structures with isolated {element}–{element} pairs under {nn_cutoff} Å.")
+        print(f"Filtering structures with isolated {element}-{element} pairs under {nn_cutoff} Å.")
 
         def has_isolated_short_pair(atoms):
             try:
@@ -1608,7 +1704,25 @@ class Featurizer:
             progress="bar",
             table_template=table_template
         )
+class DeltaFeaturizer(Featurizer):
+    def __init__(self, data, chemical_system, bspline_config, existing_potentials):
+        """
+        Initialize the DeltaFeaturizer.
+
+        :param data: DataFrame containing parsed data.
+        :param chemical_system: The target chemical system (e.g., Al-Ga-N).
+        :param bspline_config: The bspline config for the target system.
+        :param existing_potentials: List of file paths to existing potential JSONs.
+        """
+        self.data = data
+        self.chemical_system = chemical_system
+        self.bspline_config = bspline_config
         
+        # The only change is here: Instantiate DeltaBasisFeaturizer
+        self.representation = process.DeltaBasisFeaturizer(
+            copy.deepcopy(self.bspline_config),
+            existing_potentials=existing_potentials
+        )     
 class ModelTrainer:
     def __init__(self, data, chemical_system, bspline_config, regularizer):
         """
@@ -1783,9 +1897,17 @@ class ModelTrainer:
         """
         self.model.fit_from_files_parallel(filenames, self.train_keys, weight=weight, batch_size=batch_size, energy_key='energy', num_cores=num_cores, progress='bar', sample_weights=sample_weights)
     def load_fitting_data(self, filenames, num_cores=1, use_cur=False):
-        return self.model.load_tables_parallel(filenames=filenames, subset=self.train_keys, num_cores=num_cores, progress='bar', use_cur=use_cur)
+        return self.model.load_and_prepare_data(filenames=filenames, subset=self.train_keys, num_cores=num_cores, progress='bar')
+        #return self.model.load_tables_parallel(filenames=filenames, subset=self.train_keys, num_cores=num_cores, progress='bar', use_cur=use_cur)
     def fit_from_dataframe(self, df, weight=0.3, batch_size=500, num_cores=1, sample_weights=None, exclude_elements=None, outlier_config=None):
-        self.model.fit_from_dataframe_parallel(df, self.train_keys, weight=weight, batch_size=batch_size, energy_key='energy', num_cores=num_cores, progress='bar', sample_weights=sample_weights, exclude_elements=exclude_elements, outlier_config=outlier_config)
+        self.model.fit_from_prepared_data(df, weight=weight, batch_size=batch_size, num_cores=num_cores)
+        #self.model.fit_from_dataframe_parallel(df, self.train_keys, weight=weight, batch_size=batch_size, energy_key='energy', num_cores=num_cores, progress='bar', sample_weights=sample_weights, exclude_elements=exclude_elements, outlier_config=outlier_config)
+    def fit_from_dataframe_min(self, df, weight=0.3, batch_size=500, num_cores=1, sample_weights=None, min_distances=None):
+        self.model.fit_from_prepared_data(df, weight=weight, batch_size=batch_size, num_cores=num_cores)
+        if min_distances is not None:
+            for pair, dist in min_distances.items():
+                
+                self.model.postshape_repulsion_2b(pair, r_join=dist, target=15, smooth_span=0.2)
     def fit_by_interaction(self, interaction, filenames, weight=0.3, batch_size=500, num_cores=1, sample_weights=None):
         self.model.fit_by_interaction(filenames, self.train_keys, target_interactions=interaction, weight=weight, batch_size=batch_size, energy_key='energy', num_cores=num_cores, progress='bar', sample_weights=sample_weights)
     def fine_tune_from_dataframe_blend(self, df, alpha=0.05, weight=0.3, batch_size=500, num_cores=1, sample_weights=None, exclude_elements=None):
@@ -1793,6 +1915,175 @@ class ModelTrainer:
         Fine-tune the model using a DataFrame with blended data.
         """
         self.model.fine_tune_from_dataframe_blend(df, self.train_keys, alpha=alpha, weight=weight, batch_size=batch_size, energy_key='energy', num_cores=num_cores, progress='bar', sample_weights=sample_weights, exclude_elements=exclude_elements)
+    def configure_combined_model_for_fitting(self, trained_models):
+        model_to_train, bspline = self.model.configure_combined_model_for_fitting(
+            trained_models,
+            self.bspline_config
+        )
+        self.model = model_to_train
+        self.bspline_config = bspline
+        return model_to_train, bspline
+    def configure_combined_model_from_elements(self, trained_models, elements):
+        model_to_train, bspline = self.model.configure_model_by_freezing_elements(
+            frozen_elements=elements,
+            potential_paths=trained_models,
+            combined_bspline_config=self.bspline_config
+        )
+        self.model = model_to_train
+        self.bspline_config = bspline
+        return model_to_train, bspline
+    def finalize_combined_model_from_elements(
+        self,
+        full_bspline_config: "BSplineBasis",
+        existing_model_paths: List[str],
+        frozen_elements: List[str] = None
+    ) -> "least_squares.WeightedLinearModel":
+        """
+        Combines the currently trained "delta" model with existing models to
+        create and store the final, complete potential.
+
+        It selectively assembles the final model:
+        - For interactions composed exclusively of elements in `frozen_elements`,
+        coefficients are sourced from `existing_model_paths`.
+        - For all other interactions, coefficients are sourced from the newly
+        trained model (`self.model`).
+
+        Args:
+            full_bspline_config: The BSpline configuration for the final, full model.
+            existing_model_paths: A list of paths to existing model files whose
+                                coefficients will be used for frozen terms.
+            frozen_elements: A list of element symbols (e.g., ['N']) that define
+                            which interaction terms are considered "frozen".
+        """
+        if not hasattr(self.model, 'coefficients') or self.model.coefficients is None:
+            raise RuntimeError("The current model has not been trained yet. Cannot finalize.")
+
+        print("\n--- Finalizing Combined Model ---")
+
+        existing_coeffs_map = {}
+        print("Pre-loading coefficients from existing models...")
+        for model_path in existing_model_paths:
+            try:
+                print(f"  - Loading from: {model_path}")
+                sub_model = least_squares.WeightedLinearModel.from_json(model_path)
+                sub_config = bspline.BSplineBasis.from_config(sub_model.as_dict())
+                sub_partitions, sub_offsets = sub_config.get_interaction_partitions()
+
+                for interaction, size in sub_partitions.items():
+                    if interaction not in existing_coeffs_map: # Avoid overwriting
+                        sub_start = sub_offsets[interaction]
+                        existing_coeffs_map[interaction] = sub_model.coefficients[sub_start : sub_start + size]
+            except Exception as e:
+                print(f"Warning: Could not process {model_path}. Skipping. Error: {e}")
+
+
+        frozen_set = set(frozen_elements) if frozen_elements else set()
+        delta_model = self.model
+        delta_partitions, delta_offsets = delta_model.bspline_config.get_interaction_partitions()
+        full_partitions, full_offsets = full_bspline_config.get_interaction_partitions()
+        final_coefficients = np.zeros(sum(full_partitions.values()))
+
+
+        print("\nAssembling final model from sources...")
+        if frozen_set:
+            print(f"Frozen elements specified: {', '.join(sorted(list(frozen_set)))}")
+        else:
+            print("No frozen elements specified. All terms will be taken from the newly trained model.")
+
+        for interaction, size in full_partitions.items():
+            dest_start = full_offsets[interaction]
+            dest_end = dest_start + size
+
+            is_frozen_term = frozen_set and set(interaction).issubset(frozen_set)
+
+            if is_frozen_term:
+                if interaction in existing_coeffs_map:
+                    print(f"  -> Using FROZEN coefficients for {interaction}")
+                    coeffs_vector = existing_coeffs_map[interaction]
+                    if len(coeffs_vector) == size:
+                        final_coefficients[dest_start:dest_end] = coeffs_vector
+                    else:
+                        print(f"    - WARNING: Size mismatch for frozen term {interaction}. Expected {size}, got {len(coeffs_vector)}. Skipping.")
+                else:
+                    print(f"    - WARNING: Frozen term {interaction} not found in existing models. Coefficients will be zero.")
+            else:
+                if interaction in delta_offsets:
+                    print(f"  -> Using NEWLY TRAINED coefficients for {interaction}")
+                    delta_start = delta_offsets[interaction]
+                    final_coefficients[dest_start:dest_end] = delta_model.coefficients[delta_start : delta_start + size]
+                else:
+                    print(f"  -> Term {interaction} not found in delta model. Coefficients will be zero.")
+
+
+        final_model = least_squares.WeightedLinearModel(full_bspline_config)
+        final_model.coefficients = final_coefficients
+
+        self.model = final_model
+        self.bspline_config = full_bspline_config
+        self.chemical_system = full_bspline_config.chemical_system
+
+        print("\n--- Assembly Complete: ModelTrainer now holds the final model. ---")
+        return self.model
+    def finalize_combined_model(self, 
+                                full_bspline_config: BSplineBasis, 
+                                existing_model_paths: List[str]):
+        """
+        Combines the currently trained "delta" model with existing models to
+        create and store the final, complete potential.
+        """
+        if not hasattr(self.model, 'coefficients') or self.model.coefficients is None:
+            raise RuntimeError("The current model has not been trained yet. Cannot finalize.")
+
+        delta_model = self.model
+        full_partitions, full_offsets = full_bspline_config.get_interaction_partitions()
+        final_coefficients = np.zeros(sum(full_partitions.values()))
+        
+        
+        print("--- Finalizing Combined Model ---")
+
+        for model_path in existing_model_paths:
+            print(f"Loading coefficients from: {model_path}")
+            with open(model_path, 'r') as f:
+                model_dict = json.load(f)
+    
+            
+            for key in ['knots_map', 'r_min_map', 'r_max_map', 'resolution_map', 'coefficients']:
+                if key in model_dict:
+                    model_dict[key] = process.decode_interaction_map(model_dict[key])
+            
+            sub_model = least_squares.WeightedLinearModel.from_json(model_path)
+            print(sub_model.as_dict()['coefficients'][('N', 'N', 'N')])
+            sub_config = bspline.BSplineBasis.from_config(model_dict)
+            sub_partitions, sub_offsets = sub_config.get_interaction_partitions()
+
+            for interaction, size in sub_partitions.items():
+                if interaction in full_offsets:
+                    sub_start = sub_offsets[interaction]
+                    dest_start = full_offsets[interaction]
+                    final_coefficients[dest_start : dest_start + size] = \
+                        sub_model.coefficients[sub_start : sub_start + size]
+
+        print("Loading coefficients from the newly trained delta model...")
+        delta_partitions, delta_offsets = delta_model.bspline_config.get_interaction_partitions()
+
+        for interaction, size in delta_partitions.items():
+            if isinstance(interaction, str) or len(interaction) == 1:
+                continue
+            if interaction in full_offsets:
+                delta_start = delta_offsets[interaction]
+                dest_start = full_offsets[interaction]
+                final_coefficients[dest_start : dest_start + size] = \
+                    delta_model.coefficients[delta_start : delta_start + size]
+            
+        final_model = least_squares.WeightedLinearModel(full_bspline_config)
+        final_model.coefficients = final_coefficients
+        
+        self.model = final_model
+        self.bspline_config = full_bspline_config
+        self.chemical_system = full_bspline_config.chemical_system
+        
+        print("--- Assembly Complete: ModelTrainer now holds the final model. ---")
+        return self.model
     def export_model(self, filename):
         """
         Export the model to a file.
@@ -2031,6 +2322,7 @@ class ModelAnalyzer:
         self.r_cut = r_cut
         self.bins = bins
         self.bspline_config = bspline_config
+        self.visualization_files = {}
     def set_dft_validation_structures(self, dft_validation_structures):
         """
         Set the DFT validation structures.
@@ -2052,7 +2344,7 @@ class ModelAnalyzer:
         :param single_crystal_validation_structures: List of single crystal validation structures.
         """
         self.single_crystal_validation_structures = single_crystal_validation_structures
-    def analyze_model(self, data_coordinator, r_cut = 10.0, bins = 0.01, training = False):
+    def analyze_model(self, data_coordinator, r_cut = 10.0, bins = 0.01, training = False, elim=[-8,-4], flim=[-8,8]):
         """
         Analyze the model.
         """
@@ -2071,7 +2363,7 @@ class ModelAnalyzer:
         #self.generate_density_plot(analysis)
         results= self.test_model_prediction(training = training, use_elements= self.chemical_system.element_list)
         #results = self.export_prediction_data_to_dataframe()
-        self.generate_parity_plots()
+        self.generate_parity_plots(elim, flim)
         return results
     def generate_density_plot(self, analysis):
         canvases = plotting.plot_pair_distributions(analysis, show_cutoffs=False)
@@ -2100,8 +2392,21 @@ class ModelAnalyzer:
         knot_sequence = self.bspline_config.knots_map[pair]
         fig, ax = plotting.visualize_splines(coefficients, knot_sequence)
         plt.vlines([0.0], -100, 100, color="orange", linewidth=2)
-        ax.set_ylim(-0.8, 0.4)
-        ax.set_xlim(0,6)
+        ax.set_ylim(-2.0, 0.5)
+        ax.tick_params(axis='both', which='major', labelsize=16)
+        ax.xaxis.label.set_size(16)
+        ax.yaxis.label.set_size(16)
+        ax.title.set_size(20)
+        ax.set_xlim(0, 6)
+
+        # Save the figure to an in-memory buffer
+        img_buffer = BytesIO()
+        fig.savefig(img_buffer, format='png', dpi=150)
+        img_buffer.seek(0)
+        
+        # Store the binary data
+        filename = f"2b_{'-'.join(pair)}.png"
+        self.visualization_files[filename] = img_buffer.read()
         plt.show()
         return solutions
     def analyze_3b(self, element_list, model):
@@ -2110,9 +2415,54 @@ class ModelAnalyzer:
         tbp = plotting3d.ThreeBodyPlotter(model, element_list)
         tbp.sample_uniformly(20)
         plot = tbp.plot_uniform(val_limit=0.25)
-        plot.show()
             
+            
+    def generate_potential_plots(self):
+        """
+        Generates only the 2-body and 3-body potential plots and returns them.
+        This is a lightweight alternative to the full analyze_model().
+        """
+        visualization_files = {}
         
+        # --- 2-Body Plotting Logic ---
+        solutions = least_squares.arrange_coefficients(self.model.coefficients, self.bspline_config)
+        for pair in self.chemical_system.interactions_map.get(2, []):
+            try:
+                coefficients = solutions[pair]
+                knot_sequence = self.bspline_config.knots_map[pair]
+                
+                fig, ax = plotting.visualize_splines(coefficients, knot_sequence)
+                ax.set_ylim(-2.0, 0.4)
+                ax.set_xlim(0, 6)
+                
+                img_buffer = BytesIO()
+                fig.savefig(img_buffer, format='png', dpi=150)
+                img_buffer.seek(0)
+                
+                filename = f"2b_{'-'.join(pair)}.png"
+                visualization_files[filename] = img_buffer.read()
+                plt.close(fig)
+            except Exception as e:
+                print(f"Could not generate 2-body plot for {pair}: {e}")
+
+        # --- 3-Body Plotting Logic ---
+        for trio in self.chemical_system.interactions_map.get(3, []):
+            try:
+                tbp = plotting3d.ThreeBodyPlotter(self.model, trio)
+                tbp.sample_uniformly(20)
+                plot = tbp.plot_uniform(val_limit=0.25)
+                
+                img_buffer = BytesIO()
+                plot.savefig(img_buffer, format='png', dpi=150)
+                img_buffer.seek(0)
+                
+                filename = f"3b_{'-'.join(trio)}.png"
+                visualization_files[filename] = img_buffer.read()
+                plot.close()
+            except Exception as e:
+                print(f"Could not generate 3-body plot for {trio}: {e}")
+                
+        return visualization_files
     def test_model_prediction(self, training=False, drop_columns=None, use_elements = None):
         """
         Test the model prediction.
@@ -2225,7 +2575,7 @@ class ModelAnalyzer:
         unique_force_ids = list(set(ids_f))
 
         return unique_energy_ids, unique_force_ids, problematic_energy_data, problematic_force_data
-    def generate_parity_plots(self):
+    def generate_parity_plots(self, elim=None, flim=None):
         """
         Generate parity plots.
         """
@@ -2233,20 +2583,28 @@ class ModelAnalyzer:
         
         # Assuming `density_scatter` is a standalone function you have defined
         plotting.density_scatter(self.prediction_data["y_e"], self.prediction_data["p_e"], ax=ax[0], alpha=0.5)
-        ax[0].set_xlabel("DFT Energy (eV)")
-        ax[0].set_ylabel("Predicted Energy (eV)")
-        ax[0].set_title("Energy Parity Plot")
+        ax[0].set_xlabel("DFT Energy (eV)", fontsize=16)
+        ax[0].set_ylabel("Predicted Energy (eV)", fontsize=16)
+        ax[0].set_title("Energy Parity Plot", fontsize=18)
+        ax[0].tick_params(axis='both', which='major', labelsize=16)
+        if(elim is not None):
+            ax[0].set_xlim(elim[0], elim[1])
+            ax[0].set_ylim(elim[0], elim[1])
 
         plotting.density_scatter(self.prediction_data["y_f"], self.prediction_data["p_f"], ax=ax[1], alpha=0.5)
-        ax[1].set_xlabel("DFT Force (eV/A)")
-        ax[1].set_ylabel("Predicted Force (eV/A)")
-        ax[1].set_title("Force Parity Plot")
+        ax[1].set_xlabel("DFT Force (eV/A)", fontsize=16)
+        ax[1].set_ylabel("Predicted Force (eV/A)", fontsize=16)
+        ax[1].set_title("Force Parity Plot", fontsize=18)
+        ax[1].tick_params(axis='both', which='major', labelsize=16)
         ax[1].set_xlim(-8, 8)
         ax[1].set_ylim(-8, 8)
+        if (flim is not None):
+            ax[1].set_xlim(flim[0], flim[1])
+            ax[1].set_ylim(flim[0], flim[1])
 
         plt.tight_layout()
         plt.show()
-    def export_model_to_lammps(self, directory, filename=None, overwrite=True, author="author", units="metal", knots_spacing_type="nk"):
+    def export_model_to_lammps(self, directory, filename=None, overwrite=True, author="author", units="metal", knots_spacing_type="uk"):
         """
         Export the model to a LAMMPS potential file using the UF3LammpsPotentialGenerator.
 
@@ -2554,7 +2912,7 @@ class UF3LammpsPotentialGenerator:
         self.model.to_json(filename)
 
     def generate_potential_file(self, directory, filename=None, overwrite=True,
-                                author="author", units="metal", knots_spacing_type="nk"):
+                                author="author", units="metal", knots_spacing_type="uk"):
         if not os.path.exists(directory):
             os.mkdir(directory)
 
@@ -2594,7 +2952,7 @@ class UF3LammpsPotentialGenerator:
             'curvature_3b': r'_curv3b_([-+e0-9.]+)'
         }
         
-        print("updated bspline config: ", self.bspline_config)
+        #print("updated bspline config: ", self.bspline_config)
         regularizer_values = {}
         for key, pattern in reg_fields.items():
             match = re.search(pattern, potential_version)
@@ -2603,14 +2961,14 @@ class UF3LammpsPotentialGenerator:
             regularizer_values[key] = float(match.group(1))
 
         config = {
-        "r_max_map": self.bspline_config.r_max_map.copy(),
-        "knots_map": self.bspline_config.knots_map.copy(),
-        "leading_trim": self.bspline_config.leading_trim.copy(),
-        "trailing_trim": self.bspline_config.trailing_trim.copy(),
-        #"regularizer": self.bspline_config.get_regularization_matrix(**regularizer_values),
-        "data_coverage": None
-    }
-        print("config bspline: ", self.bspline_config)
+            "r_max_map": self.bspline_config.r_max_map.copy(),
+            "knots_map": self.bspline_config.knots_map.copy(),
+            "leading_trim": self.bspline_config.leading_trim.copy(),
+            "trailing_trim": self.bspline_config.trailing_trim.copy(),
+            #"regularizer": self.bspline_config.get_regularization_matrix(**regularizer_values),
+            "data_coverage": None
+        }
+       # print("config bspline: ", self.bspline_config)
         coeffs = []
         i = 0
         self.expected_shapes = {}
@@ -2619,22 +2977,22 @@ class UF3LammpsPotentialGenerator:
             if not line or line.startswith("#"):
                 i += 1
                 continue
-            print(line)
+            #print(line)
             tokens = line.split()
             if tokens[0] == "2B":
                 key = tuple(tokens[1:3])
                 config["leading_trim"][2] = int(tokens[3])
                 config["trailing_trim"][2] = int(tokens[4])
                 i += 1
-                print(lines[i])
+               # print(lines[i])
                 rmax, _ = map(float, lines[i].strip().split())
                 config["r_max_map"][key] = rmax
                 i += 1
-                print(lines[i])
+               # print(lines[i])
                 knots = list(map(float, lines[i].strip().split()))
                 config["knots_map"][key] = np.array(knots)
                 i += 1
-                print(lines[i])
+                #print(lines[i])
                 nbasis = int(lines[i].strip())
                 i += 1
                 coeff_line = lines[i].strip().split()
@@ -2643,19 +3001,19 @@ class UF3LammpsPotentialGenerator:
                     raise ValueError(f"2B: expected {nbasis} coeffs, got {len(coeff_line)} at line {i}")
                 coeffs.extend(map(float, coeff_line))
                 i += 2
-                print(lines[i])
+                #print(lines[i])
 
             elif tokens[0] == "3B":
-                print(lines[i])
+                #print(lines[i])
                 key = tuple(tokens[1:4])
                 config["leading_trim"][3] = int(tokens[4])
                 config["trailing_trim"][3] = int(tokens[5])
                 i += 1
-                print(lines[i])
+                #print(lines[i])
                 rvals = list(map(float, lines[i].strip().split()))
                 config["r_max_map"][key] = [ rvals[0], rvals[1], rvals[2]]
                 i += 1
-                print(lines[i])
+                #print(lines[i])
                 k2 = list(map(float, lines[i].strip().split())); i += 1
                 k1 = list(map(float, lines[i].strip().split())); i += 1
                 k0 = list(map(float, lines[i].strip().split())); i += 1
@@ -2663,28 +3021,28 @@ class UF3LammpsPotentialGenerator:
                 if len(k2) > len(k0):
                     k2, k1, k0 = k0, k1, k2
                 config["knots_map"][key] = [ np.array(k2), np.array(k1), np.array(k0)]
-                print(lines[i])
+                #print(lines[i])
                 shape = tuple(map(int, lines[i].strip().split()))
                 i += 1
 
                 expected_rows = shape[0] * shape[1]
                 expected_cols = shape[2]
                 self.expected_shapes[key] = shape
-                print(key)
-                print(f"3B shape: {shape}, expected_rows: {expected_rows}, expected_cols: {expected_cols}")
+                #print(key)
+                #print(f"3B shape: {shape}, expected_rows: {expected_rows}, expected_cols: {expected_cols}")
                 
                 for row_idx in range(expected_rows):
                     row = list(map(float, lines[i].strip().split()))
                     if len(row) != expected_cols:
                         raise ValueError(f"3B: line {i} has {len(row)} coeffs, expected {expected_cols}")
                     coeffs.extend(row)
-                    print(f"3B coeffs row {row_idx}: {row}")
+                    #print(f"3B coeffs row {row_idx}: {row}")
                     i += 1
 
                 i += 1  # skip "#"
             else:
                 i += 1
-        print("coeffs shape: ", len(coeffs))
+        #print("coeffs shape: ", len(coeffs))
         config["solution"] = {
             "coefficients": np.array(coeffs)
         }
@@ -2710,15 +3068,15 @@ class UF3LammpsPotentialGenerator:
         #         unsym_knots_map[k] = v.copy()
         # config["knots_map"] = unsym_knots_map
         partitions = self.bspline_config.get_interaction_partitions()
-        print(partitions)
-        print("partitions 0: ", partitions[0])
+        #print(partitions)
+        #print("partitions 0: ", partitions[0])
         expected_total = sum(partitions[0].values())
         coeff_map = {}
         coef_array = np.array(coeffs)
         for trio in self.bspline_config.interactions_map.get(3, []):
             
             test = self.bspline_config.compress_3B(coef_array, trio)
-            print(f"3B test for {trio}: {len(test)}")
+            #print(f"3B test for {trio}: {len(test)}")
         component_sizes, component_offsets = self.bspline_config.get_interaction_partitions(uncompressed=True)
         #prepend coef_array with two ones
         for key,count in partitions[0].items():
@@ -2727,8 +3085,8 @@ class UF3LammpsPotentialGenerator:
         
 
         arranged = least_squares.arrange_coefficients(coef_array, self.bspline_config)
-        for trio in self.bspline_config.interactions_map.get(3, []):
-            print(f'len pre-compress: {len(arranged[trio])} ')
+        #for trio in self.bspline_config.interactions_map.get(3, []):
+            #print(f'len pre-compress: {len(arranged[trio])} ')
             # arranged[trio] = self.bspline_config.compress_3B(arranged[trio], trio)
             # print(f"3B test 2 for {trio}: {len(arranged[trio])}")
         start_index = 0
@@ -2750,9 +3108,9 @@ class UF3LammpsPotentialGenerator:
                 reshaped = coeff_block.reshape(shape)
                 coeff_map["-".join(key)] = [reshaped[i].tolist() for i in range(shape[0])]
         component_sizes, component_offsets = self.bspline_config.get_interaction_partitions(uncompressed=False)
-        print(encode_interaction_map(config["knots_map"]))
-        print(encode_interaction_map(coeff_map))
-        print(len(encode_interaction_map(coeff_map)))
+        #print(encode_interaction_map(config["knots_map"]))
+        #print(encode_interaction_map(coeff_map))
+        #print(len(encode_interaction_map(coeff_map)))
         model_json = {
             "chemical_system": self.chemical_system.as_dict(),
             "element_list": self.chemical_system.element_list,
@@ -2784,19 +3142,19 @@ class UF3LammpsPotentialGenerator:
         interaction_sum = 0
         for interaction in self.bspline_config.get_interaction_partitions()[0]:
             interaction_sum += self.bspline_config.get_interaction_partitions()[0][interaction]
-        print("interaction sum: ", interaction_sum)
+        #print("interaction sum: ", interaction_sum)
         if interaction_sum > len(self.model.coefficients):
             for trio in self.bspline_config.interactions_map.get(3, []):
                 r_min = self.bspline_config.r_min_map[trio]
                 r_max = self.bspline_config.r_max_map[trio]
                 res = self.bspline_config.resolution_map[trio]
                 self.bspline_config.symmetry[trio] = bspline.find_symmetry_3B(trio, r_min, r_max, res)
-                print(f'Symmetry for {trio} set to {self.bspline_config.symmetry[trio]}')
+                #print(f'Symmetry for {trio} set to {self.bspline_config.symmetry[trio]}')
         self.bspline_config.update_basis_functions()
         interaction_sum = 0
         for interaction in self.bspline_config.get_interaction_partitions()[0]:
             interaction_sum += self.bspline_config.get_interaction_partitions()[0][interaction]
-        print("interaction sum: ", interaction_sum)
+        #print("interaction sum: ", interaction_sum)
         if interaction_sum != len(self.model.coefficients):
             raise ValueError(f"Interaction sum {interaction_sum} does not match model coefficients length {len(self.model.coefficients)}")
 
@@ -2854,8 +3212,8 @@ class UF3LammpsPotentialGenerator:
                 files[key] += " ".join(['{:.17g}'.format(v) for v in knots2]) + "\n"
                 files[key] += " ".join(['{:.17g}'.format(v) for v in knots1]) + "\n"
                 files[key] += " ".join(['{:.17g}'.format(v) for v in knots0]) + "\n"
-                print("coefficient len: ", len(self.model.coefficients))
-                print("bspline interaction partitions: ", self.bspline_config.get_interaction_partitions())
+                #print("coefficient len: ", len(self.model.coefficients))
+                #print("bspline interaction partitions: ", self.bspline_config.get_interaction_partitions())
                 arranged = least_squares.arrange_coefficients(self.model.coefficients, self.bspline_config)
                 decompressed = self.bspline_config.decompress_3B(arranged[interaction], interaction)
                 files[key] += f"{decompressed.shape[0]} {decompressed.shape[1]} {decompressed.shape[2]}\n"
@@ -2868,3 +3226,7 @@ class UF3LammpsPotentialGenerator:
         with open(full_path, "w") as fp:
             for content in files.values():
                 fp.write(content)
+
+
+def get_delta_bspline(full_bspline_config, existing_model_paths):
+    return get_delta_bspline_config(full_bspline_config, existing_model_paths)

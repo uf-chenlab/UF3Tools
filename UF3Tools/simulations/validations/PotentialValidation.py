@@ -120,7 +120,7 @@ class PotentialValidation:
             return None
         if lammps_data is None:
             return None
-        return abs(abs(lammps_data - dft_data) / dft_data * 100)
+        return ((lammps_data - dft_data) / dft_data * 100)
 
 class ValidationData:
     def __init__(self, potential_version, potential_file, structure):
@@ -219,39 +219,72 @@ class ValidationData:
                     else:
                         output += f"  {key}: {value}\n"
         return output
-
+    def to_mongo_dict(self):
+        """
+        Converts the ValidationData object to a dictionary for logging.
+        Note: This does not include the potential file content itself
+        """
+        return {
+            "potential_version": self.potential_version,
+            "potential_file": self.potential_file,
+            "structure": self.structure,
+            "validation_data": self.validation_data,
+            "normalized_error": self.normalized_error,
+            "energy_rmse": self.energy_rmse,
+            "force_rmse": self.force_rmse,
+            "relative_order_results": self.relative_order_results,
+            "raw_lammps_data": self.raw_lammps_data,
+            "raw_dft_data": self.raw_dft_data,
+        }
     def save_to_file(self, directory):
         path = os.path.join(directory, f"{self.potential_file}_{self.potential_version}_validation.txt")
         with open(path, "w") as file:
             file.write(str(self))
 
     def save_raw_data_to_file(self, directory):
-        base_filename = base_filename = self.potential_version.split("_")[0]
-        #trim the filename so it doenst have all of the parameters
-        
-        # Save LAMMPS data
+        base_filename = self.potential_version.split("_")[0]
         lammps_path = os.path.join(directory, f"{base_filename}_lammps_raw_data.txt")
-        with open(lammps_path, "w") as file:
+        dft_path = os.path.join(directory, f"{base_filename}_dft_raw_data.txt")
+
+        with open(lammps_path, "a") as file:
+            file.write("\n")
             file.write(f"Potential version: {self.potential_version}\n")
             file.write(f"Structure: {self.structure}\n\n")
             file.write("Raw LAMMPS Data:\n")
             for validation_type, data_list in self.raw_lammps_data.items():
                 file.write(f"  {validation_type}:\n")
-                for data in data_list:
-                    for k, v in data.items():
+                if isinstance(data_list, list):
+                    for data in data_list:
+                        if isinstance(data, dict):
+                            for k, v in data.items():
+                                file.write(f"    {k}: {v}\n")
+                        elif isinstance(data, list):
+                            for item in data:
+                                file.write(f"    {item}\n")
+                elif isinstance(data_list, dict):
+                    for k, v in data_list.items():
                         file.write(f"    {k}: {v}\n")
+            file.write("\n")
 
-        # Save DFT data
-        dft_path = os.path.join(directory, f"{base_filename}_dft_raw_data.txt")
-        with open(dft_path, "w") as file:
+        with open(dft_path, "a") as file:
+            file.write("\n")
             file.write(f"Potential version: {self.potential_version}\n")
             file.write(f"Structure: {self.structure}\n\n")
             file.write("Raw DFT Data:\n")
             for validation_type, data_list in self.raw_dft_data.items():
                 file.write(f"  {validation_type}:\n")
-                for data in data_list:
-                    for k, v in data.items():
+                if isinstance(data_list, list):
+                    for data in data_list:
+                        if isinstance(data, dict):
+                            for k, v in data.items():
+                                file.write(f"    {k}: {v}\n")
+                        elif isinstance(data, list):
+                            for item in data:
+                                file.write(f"    {item}\n")
+                elif isinstance(data_list, dict):
+                    for k, v in data_list.items():
                         file.write(f"    {k}: {v}\n")
+            file.write("\n")
         
 class ValidationDataCompare:
     def __init__(self, validation_1, validation_2):

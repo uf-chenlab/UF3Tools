@@ -17,7 +17,7 @@ class ElasticTensorValidation(PotentialValidation):
             print("[ElasticTensorValidation] Detected 2D material — using (2,2,1)")
             cls.required_supercell = (2, 2, 1)
         else:
-            cls.required_supercell = (2, 2, 2)       
+            cls.required_supercell = (2,2,2)       
         return cls.required_supercell              
     
 
@@ -50,12 +50,12 @@ class ElasticTensorValidation(PotentialValidation):
         print(f'Kwargs: {self.kwargs}')
         self.dft_data = {
             "elastic_tensor": None,
-            "bulk_modulus_voigt": None,
-            "bulk_modulus_reuss": None,
-            "bulk_modulus_hill": None,
-            "shear_modulus_voigt": None,
-            "shear_modulus_reuss": None,
-            "shear_modulus_hill": None,
+           # "bulk_modulus_voigt": None,
+           # "bulk_modulus_reuss": None,
+           # "bulk_modulus_hill": None,
+           # "shear_modulus_voigt": None,
+           # "shear_modulus_reuss": None,
+           # "shear_modulus_hill": None,
         }
         self.lammps_data = dict(self.dft_data)
         self.lammps_model_file = os.path.abspath(lammps_model_file)
@@ -334,24 +334,24 @@ class ElasticTensorValidation(PotentialValidation):
                 if (lammps_value is not None and dft_value is not None) and (lammps_value != 0 and dft_value != 0):
                     percent_error[key] = self.calculate_percent_error(dft_value, lammps_value)
 
-            percent_error["bulk_modulus_voigt"] = self.calculate_percent_error(
-                dft_results["bulk_modulus_voigt"], self.lammps_results["bulk_modulus_voigt"]
-            )
-            percent_error["bulk_modulus_reuss"] = self.calculate_percent_error(
-                dft_results["bulk_modulus_reuss"], self.lammps_results["bulk_modulus_reuss"]
-            )
-            percent_error["bulk_modulus_hill"] = self.calculate_percent_error(
-                dft_results["bulk_modulus_hill"], self.lammps_results["bulk_modulus_hill"]
-            )
-            percent_error["shear_modulus_voigt"] = self.calculate_percent_error(
-                dft_results["shear_modulus_voigt"], self.lammps_results["shear_modulus_voigt"]
-            )
-            percent_error["shear_modulus_reuss"] = self.calculate_percent_error(
-                dft_results["shear_modulus_reuss"], self.lammps_results["shear_modulus_reuss"]
-            )
-            percent_error["shear_modulus_hill"] = self.calculate_percent_error(
-                dft_results["shear_modulus_hill"], self.lammps_results["shear_modulus_hill"]
-            )
+            # percent_error["bulk_modulus_voigt"] = self.calculate_percent_error(
+            #     dft_results["bulk_modulus_voigt"], self.lammps_results["bulk_modulus_voigt"]
+            # )
+            # percent_error["bulk_modulus_reuss"] = self.calculate_percent_error(
+            #     dft_results["bulk_modulus_reuss"], self.lammps_results["bulk_modulus_reuss"]
+            # )
+            # percent_error["bulk_modulus_hill"] = self.calculate_percent_error(
+            #     dft_results["bulk_modulus_hill"], self.lammps_results["bulk_modulus_hill"]
+            # )
+            # percent_error["shear_modulus_voigt"] = self.calculate_percent_error(
+            #     dft_results["shear_modulus_voigt"], self.lammps_results["shear_modulus_voigt"]
+            # )
+            # percent_error["shear_modulus_reuss"] = self.calculate_percent_error(
+            #     dft_results["shear_modulus_reuss"], self.lammps_results["shear_modulus_reuss"]
+            # )
+            # percent_error["shear_modulus_hill"] = self.calculate_percent_error(
+            #     dft_results["shear_modulus_hill"], self.lammps_results["shear_modulus_hill"]
+            #)
             structure, indep_percent_error = self.extract_independent_elastic_constants(percent_error)
             indep_error = 0
             for key in indep_percent_error:
@@ -370,12 +370,12 @@ class ElasticTensorValidation(PotentialValidation):
                 "C44all": None,
                 "C55all": None,
                 "C66all": None,
-                "bulk_modulus_voigt": None,
-                "bulk_modulus_reuss": None,
-                "bulk_modulus_hill": None,
-                "shear_modulus_voigt": None,
-                "shear_modulus_reuss": None,
-                "shear_modulus_hill": None,
+                # "bulk_modulus_voigt": None,
+                # "bulk_modulus_reuss": None,
+                # "bulk_modulus_hill": None,
+                # "shear_modulus_voigt": None,
+                # "shear_modulus_reuss": None,
+                # "shear_modulus_hill": None,
                 'independent_elastic_constants': None
             }
 

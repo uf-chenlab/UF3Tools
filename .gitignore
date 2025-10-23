@@ -32,3 +32,5 @@ UF3Tools/simulations/validations/__pycache__/SurfaceEnergyValidation.cpython-310
 # Ignore all .pyc files
 **/*.pyc
 *.pyc
+
+UF3Tools/.env

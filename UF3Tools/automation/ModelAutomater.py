@@ -1,18 +1,16 @@
 from UF3Tools.uf3_handler import *
 from UF3Tools.simulations import *
-from concurrent.futures import ProcessPoolExecutor, as_completed, ThreadPoolExecutor
 import os
-import tempfile
 import shutil
 from tqdm import tqdm
 from threading import Lock
 import os
 import threading
 from multiprocessing import Pool
-from dask.distributed import Client
-from dask_jobqueue import SLURMCluster
 import uuid
 from datetime import datetime
+import time
+from UF3Tools.common.UF3Utility import daily_millis
 
 
 def set_cpu_affinity(core_ids):
@@ -50,7 +48,7 @@ class CoreManager:
 
 
 class ModelAutomater:
-    def __init__(self, directories, run_data_path, feature_filename, element_list, degree, chemical_system, bspline_config, data_folder=None, num_cores=1, filtered_directory=None):
+    def __init__(self, directories, run_data_path, feature_filename, element_list, degree, chemical_system, bspline_config, data_folder=None, num_cores=1, filtered_directory=None, filtered_history=[]):
          # Class-wide LUT for filter types to corresponding methods
         self.FILTER_FUNCTION_LUT = {
             'composition': 'filter_composition',
@@ -76,6 +74,8 @@ class ModelAutomater:
             'isolated_atoms': 'filter_isolated_atoms',
             'invalid_gasp_runs': 'filter_invalid_gasp_runs',
             'duplicate_indices': 'filter_duplicate_indices',
+            'unrelaxed_structures': 'filter_out_unrelaxed',
+            'cutoff_distance': 'filter_cutoff_distance',
             'none': 'get_data'
             # Add new filters here as needed
         }
@@ -140,6 +140,7 @@ class ModelAutomater:
         self.fitting_df = None
         self.fitting_features = None
         self.trainer=None
+        self.filter_history = filtered_history
     def set_filtered_directory(self, directory):
         self.filter_directory = directory
         os.makedirs(self.filter_directory, exist_ok=True)
@@ -192,6 +193,10 @@ class ModelAutomater:
         return self.training_set
     def get_testing_set(self):
         return self.testing_set
+    def get_training_keys(self):
+        return self.train_keys
+    def get_testing_keys(self):
+        return self.test_keys
     def get_trainer(self):
         return self.trainer
     def set_trainer(self, trainer):
@@ -465,6 +470,41 @@ class ModelAutomater:
             featurizer = Featurizer(data, self.chemical_system, self.bspline_config)
             featurizer.featurize_data(self.num_cores, output_file, self.feature_batch_size)
         self.load_existing_features()
+    
+    def generate_delta_features(self, existing_potentials):
+        """
+        Generate feature files for only the new ("delta") interaction terms.
+        
+        :param existing_potentials: A list of file paths to the JSON files of
+                                    existing potentials (e.g., ['AlN.json', 'GaN.json']).
+        """
+        if not existing_potentials:
+            print("No existing potentials provided. Use generate_new_features() for a full run.")
+            return
+
+        os.chdir(self.feature_directory)
+        print("--- Starting Delta Feature Generation ---")
+        print(f"Excluding terms found in: {existing_potentials}")
+
+        for label, data in self.base_data_frames.items():
+            data_type = label.replace('.pkl', '')
+            if data_type in self.data_ignore_list:
+                continue
+            
+            # Name the output file to indicate it's a delta run
+            output_file = f'df_features_delta_{data_type}.h5'
+            print(f"Generating delta features for {data_type}...")
+
+            # Use the new DeltaFeaturizer class
+            featurizer = DeltaFeaturizer(data,
+                                        self.chemical_system,
+                                        self.bspline_config,
+                                        existing_potentials)
+                                        
+            featurizer.featurize_data(self.num_cores, output_file, self.feature_batch_size)
+
+        print("--- Delta Feature Generation Complete ---")
+        self.load_existing_features() # You may need to adjust this to load the new delta files
     def clear_filtered_data(self):
         UF3FileHandler(self.filter_directory).clear_directory()
         self.filtered_data_labels = []
@@ -560,6 +600,16 @@ class ModelAutomater:
         # Apply the filter with the provided arguments
         filter_method(*args)
         
+        filter_record = {
+            'timestamp': datetime.now().isoformat(),
+            'data_type': data_type,
+            'filter_type': filter_type,
+            'params': args,
+            'initial_length': len(data),
+            'final_length': len(data_filter.get_data())
+        }
+        self.filter_history.append(filter_record)
+        
         # Export the filtered data to a new pickle file in the filtered directory
         data_filter.export_to_pickle(filtered_file_path)
         
@@ -613,6 +663,16 @@ class ModelAutomater:
                 continue
 
             filter_method(*args)
+            
+            filter_record = {
+                'timestamp': datetime.now().isoformat(),
+                'data_type': data_type,
+                'filter_type': filter_type,
+                'params': args,
+                'initial_length': len(data),
+                'final_length': len(data_filter.get_data())
+            }
+            self.filter_history.append(filter_record)
 
             data_filter.export_to_pickle(filtered_file_path)
 
@@ -620,7 +680,12 @@ class ModelAutomater:
 
             self.load_filtered_data()
 
-   
+    def get_filter_history(self):
+        return self.filter_history
+    def clear_filter_history(self):
+        self.filter_history = []
+    def set_filter_history(self, history):
+        self.filter_history = history
     def copy_unfiltered_data(self):
         """
         Copy unfiltered data to the filtered directory, excluding data types in data_ignore_list.
@@ -699,10 +764,26 @@ class ModelAutomater:
         :return: List of unique indices.
         """
         return data.index.to_series().apply(lambda x: x.lower().split('_run')[0]).unique()
-    def split_data(self, test_percent=0.2, filter_index=True, unique_indices=True, exclude_list=None):
-        # Separate excluded data first
+    def save_split_indices(self, train_idx, test_idx, prefix=None):
+        os.makedirs(self.filter_directory, exist_ok=True)
+        tag = f"{prefix}_" if prefix else ""
+        train_path = os.path.join(self.filter_directory, f"{tag}train_indices.txt")
+        test_path = os.path.join(self.filter_directory, f"{tag}test_indices.txt")
+
+        train_list = list(map(str, train_idx))
+        test_list = list(map(str, test_idx))
+
+        with open(train_path, "w") as f:
+            f.write("\n".join(train_list))
+        with open(test_path, "w") as f:
+            f.write("\n".join(test_list))
+
+    def split_data(self, test_percent=0.2, filter_index=True, unique_indices=True, exclude_list=None, random_seed=None, include_in_training=False):
+        # bail out early if there's nothing to split
         if self.model_data.empty:
             raise ValueError("Model data is empty. Please consolidate data before splitting.")
+
+        # carve out datasets we never want in test
         if exclude_list and "source_dataset" in self.model_data.columns:
             excluded_data = self.model_data[self.model_data["source_dataset"].isin(exclude_list)]
             included_data = self.model_data[~self.model_data["source_dataset"].isin(exclude_list)]
@@ -711,12 +792,15 @@ class ModelAutomater:
             excluded_data = pd.DataFrame(columns=self.model_data.columns)
             included_data = self.model_data
 
+        # unique index grouping by prefix before "_run"
         if unique_indices:
             index_prefixes = included_data.index.to_series().apply(lambda x: x.lower().split('_run')[0]).unique()
         else:
             index_prefixes = included_data.index.to_series()
 
-        np.random.seed(42)
+        if random_seed is None:
+            random_seed = daily_millis()
+        np.random.seed(random_seed)
         num_indices_to_select = int(test_percent * len(index_prefixes))
         selected_prefixes = np.random.choice(index_prefixes, num_indices_to_select, replace=False)
 
@@ -731,17 +815,28 @@ class ModelAutomater:
             train_split = shuffled.iloc[:split_point]
             test_split = shuffled.iloc[split_point:]
 
-        # Final train/test sets
-        self.training_set = pd.concat([train_split, excluded_data], axis=0)
+        # assemble final sets
+        if include_in_training:
+            # training includes train + test + always-include bucket
+            self.training_set = pd.concat([train_split, test_split, excluded_data], axis=0)
+        else:
+            # default: training excludes test, but includes the excluded bucket
+            self.training_set = pd.concat([train_split, excluded_data], axis=0)
+
         self.testing_set = test_split
 
         self.train_keys = self.training_set.index
         self.test_keys = self.testing_set.index
 
-        print(f"Training set length: {len(self.training_set)}. Testing set length: {len(self.testing_set)}")
+        if include_in_training:
+            print(f"Training set length: {len(self.training_set)} (includes test). Testing set length: {len(self.testing_set)}")
+        else:
+            print(f"Training set length: {len(self.training_set)}. Testing set length: {len(self.testing_set)}")
+        self.save_split_indices(self.train_keys, self.test_keys)
         return self.training_set, self.testing_set
 
-    def select_testing_set(self, test_dataset_names, include_in_training=False, test_split_fraction=None, seed=42069):
+
+    def select_testing_set(self, test_dataset_names, include_in_training=False, test_split_fraction=None, seed=None):
         """
         Set specific datasets (by name) as the testing set. Optionally include them in training.
 
@@ -751,6 +846,8 @@ class ModelAutomater:
         - test_split_fraction (float or None): If given, randomly split each dataset with this fraction for testing
         - seed (int): Random seed for reproducibility
         """
+        if seed is None:
+            seed = daily_millis()
         np.random.seed(seed)
         all_test_indices = set()
         all_train_indices = set()
@@ -789,8 +886,11 @@ class ModelAutomater:
 
         self.train_keys = self.training_set.index
         print(f"Testing set size: {len(self.testing_set)}, Training set size: {len(self.training_set)}")
+        self.save_split_indices(self.train_keys, self.test_keys)
         return self.training_set, self.testing_set
-    def select_testing_sets(self, dataset_names, test_split_fraction=0.1, seed=42069):
+    def select_testing_sets(self, dataset_names, test_split_fraction=0.1, seed=None):
+        if seed is None:
+            seed = daily_millis()
         np.random.seed(seed)
         all_test_indices = set()
         individual_test_splits = {}
@@ -818,6 +918,7 @@ class ModelAutomater:
         self.test_keys = self.testing_set.index
 
         print(f"Training set size: {len(self.training_set)}. Testing set size: {len(self.testing_set)}")
+        self.save_split_indices(self.train_keys, self.test_keys)
         return self.training_set, self.testing_set, individual_test_splits
     def set_training_data(self, data):
         self.training_set = data
@@ -946,13 +1047,13 @@ class ModelAutomater:
         trainer.set_training_set(training_data)
         trainer.set_testing_set(testing_data)
         self.fitting_df = trainer.load_fitting_data(features, num_cores=num_cores, use_cur=use_cur)
-        drop_columns = []
-        if exclude_elements is not None:
-            drop_columns = [
-                col for col in self.fitting_df.columns
-                if any(el.lower() in col.lower() for el in exclude_elements)
-            ]
-        self.fitting_df.drop(columns=drop_columns, inplace=True)
+        # drop_columns = []
+        # if exclude_elements is not None:
+        #     drop_columns = [
+        #         col for col in self.fitting_df.columns
+        #         if any(el.lower() in col.lower() for el in exclude_elements)
+        #     ]
+        # self.fitting_df.drop(columns=drop_columns, inplace=True)
         self.fitting_features = features
         return self.chemical_system, self.fitting_df, trainer.get_bspline_config(), features
     def train_model_from_df(self, model_filename, training_data, testing_data, regularizer, weight=0.3, batch_size=500, num_cores=1, sample_weights=None, exclude_elements=None, outlier_config=None):
@@ -963,6 +1064,66 @@ class ModelAutomater:
         trainer.fit_from_dataframe(self.fitting_df, weight=weight, batch_size=batch_size, num_cores=num_cores,sample_weights=sample_weights_final if sample_weights is not None else None, exclude_elements=exclude_elements, outlier_config=outlier_config)
         trainer.export_model(model_filename)
         return self.chemical_system, trainer.get_model(), trainer.get_bspline_config(), None, model_filename, trainer
+    def train_model_from_df_min(self, model_filename, training_data, testing_data, regularizer, weight=0.3, batch_size=500, num_cores=1, sample_weights=None, exclude_elements=None, outlier_config=None, min_distances=None):
+        sample_weights_final = self.fill_sample_weights(sample_weights)
+        trainer = ModelTrainer(self.model_data, self.chemical_system, self.bspline_config, regularizer)
+        trainer.set_training_set(training_data)
+        trainer.set_testing_set(testing_data)
+        trainer.fit_from_dataframe_min(self.fitting_df, weight=weight, batch_size=batch_size, num_cores=num_cores,sample_weights=sample_weights_final if sample_weights is not None else None, min_distances=min_distances)
+        trainer.export_model(model_filename)
+        return self.chemical_system, trainer.get_model(), trainer.get_bspline_config(), None, model_filename, trainer
+    def train_terms_with_frozen_elements(
+        self, 
+        trained_models,
+        elements_to_freeze: List[str], 
+        model_filename: str, 
+        training_data, 
+        testing_data, 
+        regularizer, 
+        full_bspline_config, 
+        weight=0.3, 
+        batch_size=500, 
+        num_cores=1, 
+        sample_weights=None, 
+        exclude_elements=None
+    ):
+        sample_weights_final = self.fill_sample_weights(sample_weights)
+        trainer = ModelTrainer(self.model_data, self.chemical_system, self.bspline_config, regularizer)
+        trainer.set_training_set(training_data)
+        trainer.set_testing_set(testing_data)
+        model_to_train, bspline = trainer.configure_combined_model_from_elements(
+            trained_models=trained_models,
+            elements=elements_to_freeze,
+           
+        )
+        self.bspline_config = bspline
+        trainer.fit_from_dataframe(self.fitting_df, weight=weight, batch_size=batch_size, num_cores=num_cores,sample_weights=sample_weights_final if sample_weights is not None else None, exclude_elements=exclude_elements, outlier_config=None)
+        print("Finalizing the combined potential...")
+        trainer.finalize_combined_model_from_elements(
+            full_bspline_config=full_bspline_config,
+            frozen_elements=elements_to_freeze,
+            existing_model_paths=trained_models
+        )
+        trainer.export_model(model_filename)
+        return self.chemical_system, trainer.get_model(), trainer.get_bspline_config(), None, model_filename, trainer
+    def train_terms_from_df(self, trained_models, model_filename, training_data, testing_data, regularizer, full_bspline_config, weight=0.3, batch_size=500, num_cores=1, sample_weights=None, exclude_elements=None):
+        sample_weights_final = self.fill_sample_weights(sample_weights)
+        trainer = ModelTrainer(self.model_data, self.chemical_system, self.bspline_config, regularizer)
+        trainer.set_training_set(training_data)
+        trainer.set_testing_set(testing_data)
+        model_to_train, bspline = trainer.configure_combined_model_for_fitting(
+           trained_models=trained_models,
+        )
+        self.bspline_config = bspline
+        trainer.fit_from_dataframe(self.fitting_df, weight=weight, batch_size=batch_size, num_cores=num_cores,sample_weights=sample_weights_final if sample_weights is not None else None, exclude_elements=exclude_elements, outlier_config=None)
+        print("Finalizing the combined potential...")
+        trainer.finalize_combined_model(
+            full_bspline_config=full_bspline_config,
+            existing_model_paths=trained_models
+        )
+        trainer.export_model(model_filename)
+        return self.chemical_system, trainer.get_model(), trainer.get_bspline_config(), None, model_filename, trainer
+
     def fine_tune_model_from_dataframe_blend(self, trainer, model_filename, training_data, testing_data, regularizer, weight=0.3, batch_size=500, num_cores=1, sample_weights=None, exclude_elements=None, alpha=0.05):
         sample_weights_final = self.fill_sample_weights(sample_weights)
         trainer.set_training_set(training_data)
@@ -1313,7 +1474,8 @@ class ModelAutomater:
                         if(result > threshold):
                             output = False
         return output
-        
+    def get_delta_bspline(full_bspline_config, existing_model_paths):
+        return get_delta_bspline(full_bspline_config, existing_model_paths)
     def check_validation_cutoffs(self, validation_data):
         """
         Check the validation data against the cutoff values.
