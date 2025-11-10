@@ -10,6 +10,7 @@ from UF3Tools.common.UF3Utility import *
 from sklearn.metrics import pairwise_distances_argmin_min
 import numpy as np
 import matplotlib.pyplot as plt
+import matplotlib.ticker as ticker
 from uf3.util.json_io import *
 from uf3.data import io
 from ase.neighborlist import neighbor_list
@@ -1137,56 +1138,53 @@ class DataFilter:
         removed_data.to_excel('filtered_data.xlsx', index=True)
 
 
-    def filter_min_pair_distance_by_element(self, nn_cutoff: float = 2.5, element: str = 'N'):
+    def filter_min_pair_distance_by_element(self, nn_cutoff: float = 2.5, elements='N'):
         """
-        Removes structures from self.data that contain pairs of a specific element
-        closer than a given cutoff distance, using a robust neighbor list method.
+        Removes structures from self.data that contain specified element pairs
+        closer than a given cutoff distance.
 
         Parameters:
-            nn_cutoff (float): The minimum allowed distance in Ångströms (Å)
-                            between two atoms of the specified element.
-            element (str): The chemical symbol of the element to check (e.g., 'N').
+            nn_cutoff (float): Minimum allowed distance (Å) between atom pairs.
+            elements (str or iterable): One element (e.g., 'N') or a pair/list like ['Al', 'N'].
         """
-        initial_count = len(self.data)
-        print(f"Filtering structures with {element}–{element} pairs closer than {nn_cutoff} Å...")
+        if isinstance(elements, str):
+            elements = (elements,)
+        elif isinstance(elements, (list, set, tuple)) and len(elements) not in (1, 2):
+            raise ValueError("elements must be a single element or a pair, e.g. 'N' or ['Al', 'N']")
 
-        def has_short_pair_fixed(atoms) -> bool:
-            """
-            Checks a single atomic structure for short element-element pairs
-            using a periodic-boundary-aware neighbor list.
-            """
+        pair_desc = "-".join(elements)
+        print(f"Filtering structures with {pair_desc} pairs closer than {nn_cutoff} Å...")
+
+        def has_short_pair(atoms) -> bool:
             try:
-                # 1. Create a set of indices for the target element for fast lookups.
-                target_indices = {atom.index for atom in atoms if atom.symbol == element}
-                if len(target_indices) < 2:
-                    return False
-
-                # 2. Build a neighbor list containing all pairs of atoms (any element)
-                # that are closer than the cutoff distance. This correctly handles PBC.
-                # 'ij' returns two arrays: one for the 'i' index, one for the 'j'.
                 idx_i, idx_j = neighbor_list('ij', atoms, nn_cutoff)
 
-                # 3. Iterate through the found pairs and check if both atoms in a pair
-                # are of the target element.
                 for i, j in zip(idx_i, idx_j):
-                    if i in target_indices and j in target_indices:
-                        return True # Found a short pair of the target element.
+                    sym_i, sym_j = atoms[i].symbol, atoms[j].symbol
 
-                # 4. If the loop completes, no short pairs were found.
+                    # Case 1: one-element input → check same-type pairs
+                    if len(elements) == 1:
+                        if sym_i == sym_j == elements[0]:
+                            return True
+
+                    # Case 2: two-element input → check unordered cross pairs
+                    elif len(elements) == 2:
+                        if {sym_i, sym_j} == set(elements):
+                            return True
+
                 return False
             except Exception as e:
-                print(f"Skipping a structure due to an error in neighbor list calculation: {e}")
-                # Return True to remove potentially problematic structures.
-                return True
+                print(f"Skipping a structure due to neighbor list error: {e}")
+                return True  # skip problematic ones
 
-        # Apply the check and filter the data
-        to_remove_mask = self.data['geometry'].apply(has_short_pair_fixed)
+        initial_count = len(self.data)
+        to_remove_mask = self.data['geometry'].apply(has_short_pair)
         self.data = self.data[~to_remove_mask]
-        
+
         final_count = len(self.data)
-        removed_count = initial_count - final_count
-        print(f"Filter complete. Removed {removed_count} structures. "
+        print(f"Filter complete. Removed {initial_count - final_count} structures. "
             f"{final_count} structures remaining.")
+
     def filter_cutoff_distance(self, cutoff_distance):
         """
         Filters out structures where the maximum pairwise atomic distance is less than the specified cutoff.
@@ -1915,10 +1913,12 @@ class ModelTrainer:
         Fine-tune the model using a DataFrame with blended data.
         """
         self.model.fine_tune_from_dataframe_blend(df, self.train_keys, alpha=alpha, weight=weight, batch_size=batch_size, energy_key='energy', num_cores=num_cores, progress='bar', sample_weights=sample_weights, exclude_elements=exclude_elements)
-    def configure_combined_model_for_fitting(self, trained_models):
+    def configure_combined_model_for_fitting(self, trained_models,
+                                             frozen_ranges_spec: dict = None):
         model_to_train, bspline = self.model.configure_combined_model_for_fitting(
             trained_models,
-            self.bspline_config
+            self.bspline_config,
+            frozen_ranges_spec=frozen_ranges_spec
         )
         self.model = model_to_train
         self.bspline_config = bspline
@@ -2024,9 +2024,11 @@ class ModelTrainer:
 
         print("\n--- Assembly Complete: ModelTrainer now holds the final model. ---")
         return self.model
-    def finalize_combined_model(self, 
-                                full_bspline_config: BSplineBasis, 
-                                existing_model_paths: List[str]):
+    def finalize_combined_model(
+        self,
+        full_bspline_config: BSplineBasis,
+        existing_model_paths: List[str]
+    ):
         """
         Combines the currently trained "delta" model with existing models to
         create and store the final, complete potential.
@@ -2038,43 +2040,101 @@ class ModelTrainer:
         full_partitions, full_offsets = full_bspline_config.get_interaction_partitions()
         final_coefficients = np.zeros(sum(full_partitions.values()))
         
-        
         print("--- Finalizing Combined Model ---")
 
+        # --- STAGE 1: Load all coefficients from existing models ---
+        # This populates final_coefficients with the original values,
+        # including the positive repulsive regions.
+        print("Loading baseline coefficients from existing models...")
         for model_path in existing_model_paths:
             print(f"Loading coefficients from: {model_path}")
-            with open(model_path, 'r') as f:
-                model_dict = json.load(f)
-    
-            
-            for key in ['knots_map', 'r_min_map', 'r_max_map', 'resolution_map', 'coefficients']:
-                if key in model_dict:
-                    model_dict[key] = process.decode_interaction_map(model_dict[key])
-            
-            sub_model = least_squares.WeightedLinearModel.from_json(model_path)
-            print(sub_model.as_dict()['coefficients'][('N', 'N', 'N')])
-            sub_config = bspline.BSplineBasis.from_config(model_dict)
-            sub_partitions, sub_offsets = sub_config.get_interaction_partitions()
+            try:
+                with open(model_path, 'r') as f:
+                    model_dict = json.load(f)
+                
+                for key in ['knots_map', 'r_min_map', 'r_max_map', 'resolution_map', 'coefficients']:
+                    if key in model_dict:
+                        model_dict[key] = process.decode_interaction_map(model_dict[key])
+                
+                sub_model = least_squares.WeightedLinearModel.from_json(model_path)
+                sub_config = bspline.BSplineBasis.from_config(model_dict)
+                sub_partitions, sub_offsets = sub_config.get_interaction_partitions()
 
-            for interaction, size in sub_partitions.items():
-                if interaction in full_offsets:
-                    sub_start = sub_offsets[interaction]
-                    dest_start = full_offsets[interaction]
-                    final_coefficients[dest_start : dest_start + size] = \
-                        sub_model.coefficients[sub_start : sub_start + size]
+                for interaction, size in sub_partitions.items():
+                    if interaction in full_offsets:
+                        sub_start = sub_offsets[interaction]
+                        dest_start = full_offsets[interaction]
+                        
+                        # Ensure slice lengths match before assignment
+                        if full_partitions[interaction] == size:
+                            final_coefficients[dest_start : dest_start + size] = \
+                                sub_model.coefficients[sub_start : sub_start + size]
+                        else:
+                            print(f"Warning: Size mismatch for {interaction} in {model_path}. Skipping.")
+            except Exception as e:
+                print(f"Warning: Could not process {model_path}. Skipping. Error: {e}")
 
-        print("Loading coefficients from the newly trained delta model...")
+        print("Baseline coefficients loaded.")
+
+        # --- START: BUG FIX (New Per-Coefficient Logic) ---
+        
+        # --- STAGE 2: Selectively overwrite *only* trainable coefficients ---
+        print("Loading *trainable* coefficients from the newly trained delta model...")
+
+        # Get the set of *local* indices that were frozen in the delta_model
+        frozen_indices_local = set()
+        if hasattr(delta_model.bspline_config, 'col_idx') and delta_model.bspline_config.col_idx is not None:
+            frozen_indices_local = set(np.asarray(delta_model.bspline_config.col_idx, dtype=int))
+        
+        if frozen_indices_local:
+            print(f"Identified {len(frozen_indices_local)} frozen coefficients to skip.")
+        else:
+            print("No frozen coefficients found. Will copy all coefficients from delta model.")
+
+        # Get partition maps for both models to map indices
         delta_partitions, delta_offsets = delta_model.bspline_config.get_interaction_partitions()
-
-        for interaction, size in delta_partitions.items():
+        
+        copied_coeffs_count = 0
+        
+        # Iterate through every interaction block defined in the delta_model
+        for interaction, delta_size in delta_partitions.items():
             if isinstance(interaction, str) or len(interaction) == 1:
+                continue # Skip 1-body terms
+
+            if interaction not in full_offsets:
+                print(f"Warning: Interaction {interaction} from delta model not in full config. Skipping.")
                 continue
-            if interaction in full_offsets:
-                delta_start = delta_offsets[interaction]
-                dest_start = full_offsets[interaction]
-                final_coefficients[dest_start : dest_start + size] = \
-                    delta_model.coefficients[delta_start : delta_start + size]
             
+            if interaction not in delta_offsets:
+                print(f"Warning: Interaction {interaction} not in delta model offsets map. Skipping.")
+                continue
+            
+            # Get the starting index for this block in both models
+            delta_start = delta_offsets[interaction]
+            dest_start = full_offsets[interaction]
+            
+            # Check for size mismatch
+            if delta_size != full_partitions.get(interaction):
+                print(f"Warning: Size mismatch for {interaction}. Delta={delta_size}, Full={full_partitions.get(interaction)}. Skipping.")
+                continue
+
+            # Iterate *per-coefficient* within the block
+            for i in range(delta_size):
+                local_idx = delta_start + i  # Index in the delta_model
+                
+                # Check if this *local* index was frozen.
+                if local_idx not in frozen_indices_local:
+                    # If NOT frozen, it's trainable. Copy its value.
+                    global_idx = dest_start + i # Corresponding index in the final_model
+                    
+                    final_coefficients[global_idx] = delta_model.coefficients[local_idx]
+                    copied_coeffs_count += 1
+
+        print(f"Copied {copied_coeffs_count} trainable coefficients from delta model.")
+        
+        # --- END: BUG FIX ---
+
+        # --- STAGE 3: Create final model (Unchanged) ---
         final_model = least_squares.WeightedLinearModel(full_bspline_config)
         final_model.coefficients = final_coefficients
         
@@ -2415,6 +2475,8 @@ class ModelAnalyzer:
         tbp = plotting3d.ThreeBodyPlotter(model, element_list)
         tbp.sample_uniformly(20)
         plot = tbp.plot_uniform(val_limit=0.25)
+        plot.show()
+        return plot
             
             
     def generate_potential_plots(self):
@@ -2575,32 +2637,51 @@ class ModelAnalyzer:
         unique_force_ids = list(set(ids_f))
 
         return unique_energy_ids, unique_force_ids, problematic_energy_data, problematic_force_data
-    def generate_parity_plots(self, elim=None, flim=None):
-        """
-        Generate parity plots.
-        """
+    def generate_parity_plots(self, elim=None, flim=None, num_ticks=5):
         fig, ax = plt.subplots(1, 2, figsize=(12, 6))
-        
-        # Assuming `density_scatter` is a standalone function you have defined
-        plotting.density_scatter(self.prediction_data["y_e"], self.prediction_data["p_e"], ax=ax[0], alpha=0.5)
-        ax[0].set_xlabel("DFT Energy (eV)", fontsize=16)
-        ax[0].set_ylabel("Predicted Energy (eV)", fontsize=16)
-        ax[0].set_title("Energy Parity Plot", fontsize=18)
-        ax[0].tick_params(axis='both', which='major', labelsize=16)
-        if(elim is not None):
-            ax[0].set_xlim(elim[0], elim[1])
-            ax[0].set_ylim(elim[0], elim[1])
 
-        plotting.density_scatter(self.prediction_data["y_f"], self.prediction_data["p_f"], ax=ax[1], alpha=0.5)
-        ax[1].set_xlabel("DFT Force (eV/A)", fontsize=16)
-        ax[1].set_ylabel("Predicted Force (eV/A)", fontsize=16)
-        ax[1].set_title("Force Parity Plot", fontsize=18)
-        ax[1].tick_params(axis='both', which='major', labelsize=16)
-        ax[1].set_xlim(-8, 8)
-        ax[1].set_ylim(-8, 8)
-        if (flim is not None):
-            ax[1].set_xlim(flim[0], flim[1])
-            ax[1].set_ylim(flim[0], flim[1])
+        # helper to build a parity plot
+        def make_parity_plot(x, y, a, label_x, label_y, title, lim=None):
+            dmin = float(lim[0]) if lim else float(min(x.min(), y.min()))
+            dmax = float(lim[1]) if lim else float(max(x.max(), y.max()))
+
+            plotting.density_scatter(x, y, ax=a, alpha=0.5)
+            a.plot([dmin, dmax], [dmin, dmax], 'k--', lw=1.2, alpha=0.4)
+            a.set_xlim(dmin, dmax)
+            a.set_ylim(dmin, dmax)
+            a.set_aspect('equal', adjustable='box')
+
+            # exact, evenly spaced ticks including endpoints
+            ticks = np.linspace(dmin, dmax, num_ticks)
+            a.xaxis.set_major_locator(ticker.FixedLocator(ticks))
+            a.yaxis.set_major_locator(ticker.FixedLocator(ticks))
+            a.xaxis.set_major_formatter(ticker.FormatStrFormatter('%.2f'))
+            a.yaxis.set_major_formatter(ticker.FormatStrFormatter('%.2f'))
+
+            a.set_xlabel(label_x, fontsize=16)
+            a.set_ylabel(label_y, fontsize=16)
+            a.set_title(title, fontsize=18)
+            a.tick_params(axis='both', which='major', labelsize=14)
+
+        make_parity_plot(
+            self.prediction_data["y_e"],
+            self.prediction_data["p_e"],
+            ax[0],
+            "DFT Energy (eV/atom)",
+            "Predicted Energy (eV/atom)",
+            "Energy Parity Plot",
+            elim
+        )
+
+        make_parity_plot(
+            self.prediction_data["y_f"],
+            self.prediction_data["p_f"],
+            ax[1],
+            "DFT Force (eV/Å)",
+            "Predicted Force (eV/Å)",
+            "Force Parity Plot",
+            flim
+        )
 
         plt.tight_layout()
         plt.show()
