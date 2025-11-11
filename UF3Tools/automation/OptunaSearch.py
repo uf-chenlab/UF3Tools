@@ -835,7 +835,7 @@ class UF3OptunaTPEFineTuningTrainer(UF3AbstractOptunaTrainer):
         return loss
     
 class UF3OptunaDeltaTrainer(UF3AbstractOptunaTrainer):
-    def __init__(self, base_directory, automater, settings, job_params, existing_models, full_bspline_config, elements=None):
+    def __init__(self, base_directory, automater, settings, job_params, existing_models, full_bspline_config, elements=None, frozen_ranges_spec=None):
         run_id = str(uuid.uuid4())[:32]
         run_id_str = f"optuna_delta_{run_id}"
         print("delta automater bspline: ", automater.get_bspline_config())
@@ -844,7 +844,9 @@ class UF3OptunaDeltaTrainer(UF3AbstractOptunaTrainer):
         self.full_bspline_config = full_bspline_config
         self.elements = elements if elements is not None else automater.get_chemical_system().element_list
         settings['frozen_elements'] = self.elements
-
+        settings['frozen_ranges_spec'] = frozen_ranges_spec
+    def get_name(self):
+        return self.settings.get("full_study_name", f"UF3_Optuna_Frozen-{self.run_id}")
     def run(self, temp_search=False):
         self.init_workers()
         sampler = optuna.samplers.TPESampler(
@@ -852,7 +854,7 @@ class UF3OptunaDeltaTrainer(UF3AbstractOptunaTrainer):
             group=True,
             n_startup_trials=self.settings.get('n_startup_trials', 10)
         )
-        base_name = self.settings.get("study_name", "UF3_Distributed_Optuna_Delta")
+        base_name = self.settings.get("study_name", "UF3_Optuna_Frozen")
         full_name = f"{self.run_id}-{base_name}"
         self.settings["full_study_name"] = full_name
         study = optuna.create_study(
@@ -891,8 +893,28 @@ class UF3OptunaDeltaTrainer(UF3AbstractOptunaTrainer):
             "curvature_2b": curvature_2b,
             "curvature_3b": curvature_3b
         }
+        frozen_ranges_spec = settings.get('frozen_ranges_spec', None)
+            
         try:
-            if(settings.get('frozen_elements', None) is None):
+            if frozen_ranges_spec is not None:
+                _, _, _, _, _, trainer = automater.train_terms_from_df(
+                    trained_models=settings['existing_models'],
+                    model_filename=model_filename,
+                    training_data=automater.get_training_set(),
+                    testing_data=automater.get_testing_set(),
+                    regularizer=regularizer,
+                    full_bspline_config=settings['full_bspline_config'],
+                    weight=weight,
+                    batch_size=settings['batch_size'],
+                    num_cores=settings['cores_per_job'],
+                    sample_weights=settings['sample_weights'],
+                    exclude_elements=settings.get('excluded_testing_elements'),
+                    frozen_ranges_spec=frozen_ranges_spec
+                )
+                final_model = trainer.get_model()
+                final_bspline_config = trainer.get_bspline_config()
+                final_chemical_system = final_bspline_config.chemical_system
+            elif(settings.get('frozen_elements', None) is None):
                 _, _, _, _, _, trainer = automater.train_terms_from_df(
                     trained_models=settings['existing_models'],
                     model_filename=model_filename,
