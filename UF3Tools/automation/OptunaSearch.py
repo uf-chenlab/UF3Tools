@@ -839,12 +839,13 @@ class UF3OptunaDeltaTrainer(UF3AbstractOptunaTrainer):
         run_id = str(uuid.uuid4())[:32]
         run_id_str = f"optuna_delta_{run_id}"
         print("delta automater bspline: ", automater.get_bspline_config())
-        super().__init__(base_directory, automater, settings, job_params, run_id_str)
         self.existing_models = existing_models
         self.full_bspline_config = full_bspline_config
-        self.elements = elements if elements is not None else automater.get_chemical_system().element_list
+        self.elements = elements
         settings['frozen_elements'] = self.elements
         settings['frozen_ranges_spec'] = frozen_ranges_spec
+        super().__init__(base_directory, automater, settings, job_params, run_id_str)
+        print('frozen_ranges_spec: ', frozen_ranges_spec)
     def get_name(self):
         return self.settings.get("full_study_name", f"UF3_Optuna_Frozen-{self.run_id}")
     def run(self, temp_search=False):
@@ -894,10 +895,11 @@ class UF3OptunaDeltaTrainer(UF3AbstractOptunaTrainer):
             "curvature_3b": curvature_3b
         }
         frozen_ranges_spec = settings.get('frozen_ranges_spec', None)
-            
+        print("frozen ranges spec: ", frozen_ranges_spec)
         try:
             if frozen_ranges_spec is not None:
-                _, _, _, _, _, trainer = automater.train_terms_from_df(
+                print("running frozen ranges")
+                final_chemical_system, final_model, final_bspline_config, _, _, trainer = automater.train_terms_from_df(
                     trained_models=settings['existing_models'],
                     model_filename=model_filename,
                     training_data=automater.get_training_set(),
@@ -911,11 +913,8 @@ class UF3OptunaDeltaTrainer(UF3AbstractOptunaTrainer):
                     exclude_elements=settings.get('excluded_testing_elements'),
                     frozen_ranges_spec=frozen_ranges_spec
                 )
-                final_model = trainer.get_model()
-                final_bspline_config = trainer.get_bspline_config()
-                final_chemical_system = final_bspline_config.chemical_system
             elif(settings.get('frozen_elements', None) is None):
-                _, _, _, _, _, trainer = automater.train_terms_from_df(
+                final_chemical_system, final_model, final_bspline_config, _, _, trainer = automater.train_terms_from_df(
                     trained_models=settings['existing_models'],
                     model_filename=model_filename,
                     training_data=automater.get_training_set(),
@@ -928,11 +927,8 @@ class UF3OptunaDeltaTrainer(UF3AbstractOptunaTrainer):
                     sample_weights=settings['sample_weights'],
                     exclude_elements=settings.get('excluded_testing_elements')
                 )
-                final_model = trainer.get_model()
-                final_bspline_config = trainer.get_bspline_config()
-                final_chemical_system = final_bspline_config.chemical_system
             else:
-                _, _, _, _, _, trainer = automater.train_terms_with_frozen_elements(
+                final_chemical_system, final_model, final_bspline_config, _, _, trainer = automater.train_terms_with_frozen_elements(
                     trained_models=settings['existing_models'],
                     elements_to_freeze=settings['frozen_elements'],
                     model_filename=model_filename,
@@ -947,9 +943,6 @@ class UF3OptunaDeltaTrainer(UF3AbstractOptunaTrainer):
                     exclude_elements=settings.get('excluded_testing_elements'),
                     frozen_elements=settings['frozen_elements']
                 )
-                final_model = trainer.get_model()
-                final_bspline_config = trainer.get_bspline_config()
-                final_chemical_system = final_bspline_config.chemical_system
 
             return final_chemical_system, final_model, final_bspline_config, model_filename, potential_label
 
