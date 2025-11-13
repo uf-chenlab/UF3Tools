@@ -139,12 +139,16 @@ class DFTDataParser:
                 row = lines[start_idx + i].strip()
                 if row:
                     elastic_tensor.append([float(x) for x in row.split()])
-
             if is_2d:
-                full_tensor = [[0.0]*6 for _ in range(6)]
-                for i in range(3):
-                    for j in range(3):
-                        full_tensor[i][j] = elastic_tensor[i][j]
+                full_tensor = [[None]*6 for _ in range(6)]
+
+                # 2D matrix → correct Voigt indices
+                full_tensor[0][0] = elastic_tensor[0][0]  # C11
+                full_tensor[0][1] = elastic_tensor[0][1]  # C12
+                full_tensor[1][0] = elastic_tensor[1][0]  # C12
+                full_tensor[1][1] = elastic_tensor[1][1]  # C22 (same as C11)
+                full_tensor[5][5] = elastic_tensor[2][2]  # C66 → correct Voigt slot
+
                 dft_data["elastic_tensor"] = full_tensor
             else:
                 dft_data["elastic_tensor"] = elastic_tensor
