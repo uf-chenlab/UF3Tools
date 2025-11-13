@@ -2383,6 +2383,7 @@ class ModelAnalyzer:
         self.bins = bins
         self.bspline_config = bspline_config
         self.visualization_files = {}
+        np.savetxt("coefficients_analyzer.csv", self.model.coefficients, delimiter=",")
     def set_dft_validation_structures(self, dft_validation_structures):
         """
         Set the DFT validation structures.
@@ -2404,7 +2405,7 @@ class ModelAnalyzer:
         :param single_crystal_validation_structures: List of single crystal validation structures.
         """
         self.single_crystal_validation_structures = single_crystal_validation_structures
-    def analyze_model(self, data_coordinator, r_cut = 10.0, bins = 0.01, training = False, elim=[-8,-4], flim=[-8,8]):
+    def analyze_model(self, data_coordinator, r_cut = 10.0, bins = 0.01,):
         """
         Analyze the model.
         """
@@ -2416,10 +2417,13 @@ class ModelAnalyzer:
         df_slice = self.training_data[self.atoms_key].iloc[histogram_slice]
         self.analyzer.load_entries(df_slice)
         analysis = self.analyzer.analyze()
+        return analysis 
+    def plot_model(self, analysis, three_body=False, training = False, elim=[-8,-4], flim=[-8,8]):
         for element_list in self.chemical_system.interactions_map[2]:
             self.analyze_2b(element_list, analysis)
-        for element_list in self.chemical_system.interactions_map[3]:
-            self.analyze_3b(element_list, self.model)
+        if three_body:
+            for element_list in self.chemical_system.interactions_map[3]:
+                self.analyze_3b(element_list, self.model)
         #self.generate_density_plot(analysis)
         results= self.test_model_prediction(training = training, use_elements= self.chemical_system.element_list)
         #results = self.export_prediction_data_to_dataframe()
@@ -2445,10 +2449,18 @@ class ModelAnalyzer:
         """
         print(f"Analyzing 2-body interactions for {element_list}")
         pair = element_list
+        if pair not in analysis["lower_bounds"]:
+            print(f"No lower bound data for pair {pair}, skipping repulsion fix.")
+            return
         r_target = analysis["lower_bounds"][pair]
+        np.savetxt(f"coefficients_{'-'.join(pair)}.csv", self.model.coefficients, delimiter=",")
         self.model.fix_repulsion_2b(pair, r_target, min_curvature=0.0)
+        np.savetxt(f"coefficients_{'-'.join(pair)}_2.csv", self.model.coefficients, delimiter=",")
         solutions = least_squares.arrange_coefficients(self.model.coefficients, self.bspline_config)
         coefficients = solutions[pair]
+        print("pair: ", pair)
+        print("target: ", r_target)
+        print("coeffs: ", coefficients)
         knot_sequence = self.bspline_config.knots_map[pair]
         fig, ax = plotting.visualize_splines(coefficients, knot_sequence)
         plt.vlines([0.0], -100, 100, color="orange", linewidth=2)

@@ -1111,11 +1111,13 @@ class ModelAutomater:
         trainer = ModelTrainer(self.model_data, self.chemical_system, self.bspline_config, regularizer)
         trainer.set_training_set(training_data)
         trainer.set_testing_set(testing_data)
-        model_to_train, bspline = trainer.configure_combined_model_for_fitting(
-            trained_models=trained_models,
-            frozen_ranges_spec=frozen_ranges_spec
-        )
-        self.bspline_config = bspline
+        if frozen_ranges_spec is not None:
+            model_to_train, bspline = trainer.configure_combined_model_for_fitting(
+                trained_models=trained_models,
+                frozen_ranges_spec=frozen_ranges_spec
+            )
+            self.bspline_config = bspline
+            
         trainer.fit_from_dataframe(self.fitting_df, weight=weight, batch_size=batch_size, num_cores=num_cores,sample_weights=sample_weights_final if sample_weights is not None else None, exclude_elements=exclude_elements, outlier_config=None)
         print("Finalizing the combined potential...")
         if frozen_ranges_spec is None:
@@ -1123,7 +1125,7 @@ class ModelAutomater:
                 full_bspline_config=full_bspline_config,
                 existing_model_paths=trained_models
             )
-        trainer.export_model(model_filename)
+        #trainer.export_model(model_filename)
         return self.chemical_system, trainer.get_model(), trainer.get_bspline_config(), None, model_filename, trainer
 
     def fine_tune_model_from_dataframe_blend(self, trainer, model_filename, training_data, testing_data, regularizer, weight=0.3, batch_size=500, num_cores=1, sample_weights=None, exclude_elements=None, alpha=0.05):
@@ -1215,6 +1217,7 @@ class ModelAutomater:
         self.set_trainer(trainer)
         # Retrieve the imported model
         imported_model = trainer.get_model()
+        np.savetxt("coefficients_imported.csv", imported_model.coefficients, delimiter=",")
         
         # Optionally, you could perform additional checks or setup here
         print(f"Model imported successfully from {model_filename}.")
