@@ -1,3 +1,5 @@
 # UF3Tools
 
-Documentation and examples will be added soon - 12/13
+UF3 AlN potential is here: https://github.com/uf-chenlab/UF3-AlN
+
+UF3 MoS2 potential is here: https://github.com/uf-chenlab/UF3-MoS2
